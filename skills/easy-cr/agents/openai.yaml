@@ -1,0 +1,4 @@
+interface:
+  display_name: "Easy CR"
+  short_description: "Generate business-first interactive HTML code reviews"
+  default_prompt: "Generate an Easy CR HTML for the current change and organize it by business timeline."

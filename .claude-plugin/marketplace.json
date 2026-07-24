@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "easy-cr",
+  "description": "Local Easy CR plugin for Codex and Claude Code.",
+  "owner": {
+    "name": "Bytedance"
+  },
+  "plugins": [
+    {
+      "name": "easy-cr",
+      "description": "Business-first interactive HTML code reviews with optional GoLand navigation.",
+      "version": "1.0.4",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

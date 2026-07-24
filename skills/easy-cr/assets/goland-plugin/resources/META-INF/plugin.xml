@@ -1,0 +1,13 @@
+<idea-plugin>
+  <id>com.bytedance.easycr</id>
+  <name>Easy CR</name>
+  <vendor>Bytedance</vendor>
+  <version>3.0.0</version>
+  <description>Restricted loopback semantic references and code navigation for Easy CR HTML reviews.</description>
+  <depends>com.intellij.modules.platform</depends>
+  <depends>org.jetbrains.plugins.go</depends>
+  <extensions defaultExtensionNs="com.intellij">
+    <applicationService serviceImplementation="com.bytedance.easycr.EasyCrHttpService"/>
+    <postStartupActivity implementation="com.bytedance.easycr.EasyCrStartupActivity"/>
+  </extensions>
+</idea-plugin>

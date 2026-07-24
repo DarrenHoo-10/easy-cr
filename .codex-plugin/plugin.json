@@ -1,0 +1,25 @@
+{
+  "name": "easy-cr",
+  "version": "1.0.0+codex.20260724084740",
+  "description": "Generate business-sequenced HTML code reviews with comments and optional GoLand semantic navigation.",
+  "author": {
+    "name": "Bytedance"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Easy CR",
+    "shortDescription": "Business-first interactive HTML code reviews.",
+    "longDescription": "Generate self-contained code review pages ordered by business lifecycle, with inline comments, replies, themes, filtering, and optional GoLand semantic references and navigation.",
+    "developerName": "Bytedance",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Generate an Easy CR HTML for my current changes.",
+      "Configure the editor used by Easy CR."
+    ],
+    "brandColor": "#4F7FD9"
+  }
+}
