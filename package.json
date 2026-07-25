@@ -1,0 +1,42 @@
+{
+  "name": "easy-cr",
+  "version": "1.1.0",
+  "description": "Generate business-sequenced HTML code reviews with comments and optional GoLand semantic navigation.",
+  "keywords": [
+    "codex",
+    "claude-code",
+    "code-review",
+    "developer-tools",
+    "goland"
+  ],
+  "author": {
+    "name": "Bytedance"
+  },
+  "license": "UNLICENSED",
+  "bin": {
+    "easy-cr": "bin/easy-cr"
+  },
+  "files": [
+    ".claude-plugin/marketplace.json",
+    ".claude-plugin/plugin.json",
+    ".codex-plugin/plugin.json",
+    "bin/easy-cr",
+    "scripts/install_cli.py",
+    "skills/easy-cr/SKILL.md",
+    "skills/easy-cr/agents/",
+    "skills/easy-cr/assets/",
+    "skills/easy-cr/references/",
+    "skills/easy-cr/scripts/*.py"
+  ],
+  "scripts": {
+    "test": "python3 -m py_compile skills/easy-cr/scripts/*.py && python3 -m unittest discover -s skills/easy-cr/tests -v",
+    "prepack": "npm test"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

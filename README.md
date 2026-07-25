@@ -53,7 +53,27 @@ Codex 与 Claude Code 共用用户级配置：
 ~/.config/easy-cr/goland-token
 ```
 
-安装全局命令：
+## 通过 npm 安装
+
+包名为 `easy-cr`，安装后会提供同名全局命令：
+
+```bash
+npm install --global easy-cr
+easy-cr --version
+easy-cr init
+```
+
+也可以显式指定客户端与基础模式，适合自动化环境：
+
+```bash
+easy-cr init --editor none --client codex --client claude --non-interactive
+```
+
+npm 仅用于分发，Easy CR 运行时仍需要 Python 3.10+ 和 Git。GoLand 增强模式仅支持 macOS 本机 GoLand。
+
+## 从源码安装
+
+在仓库根目录安装全局命令：
 
 ```bash
 python3 scripts/install_cli.py
@@ -63,12 +83,6 @@ python3 scripts/install_cli.py
 
 ```bash
 easy-cr init
-```
-
-自动化环境可显式指定配置：
-
-```bash
-easy-cr init --editor none --client codex --client claude --non-interactive
 ```
 
 常用配置与诊断命令：
@@ -135,8 +149,8 @@ python3 skills/easy-cr/scripts/build_review.py \
 ## 验证
 
 ```bash
-python3 -m py_compile skills/easy-cr/scripts/*.py
-python3 -m unittest discover -s skills/easy-cr/tests -v
+npm test
+npm pack --dry-run
 python3 skills/easy-cr/scripts/setup_goland_plugin.py \
   --build-only /tmp/easy-cr.jar
 ```

@@ -39,15 +39,22 @@ install_cli = load_module(
 
 class PluginManifestTest(unittest.TestCase):
     def test_codex_and_claude_manifests_share_easy_cr_skill(self):
+        package = json.loads((PLUGIN_DIR / "package.json").read_text())
         codex = json.loads((PLUGIN_DIR / ".codex-plugin" / "plugin.json").read_text())
         claude = json.loads((PLUGIN_DIR / ".claude-plugin" / "plugin.json").read_text())
         marketplace = json.loads((PLUGIN_DIR / ".claude-plugin" / "marketplace.json").read_text())
 
+        self.assertEqual(package["name"], "easy-cr")
+        self.assertEqual(package["bin"], {"easy-cr": "bin/easy-cr"})
         self.assertEqual(codex["name"], "easy-cr")
         self.assertEqual(codex["skills"], "./skills/")
         self.assertEqual(claude["name"], "easy-cr")
         self.assertEqual(marketplace["plugins"][0]["name"], "easy-cr")
         self.assertEqual(marketplace["plugins"][0]["source"], "./")
+        self.assertEqual(codex["version"], package["version"])
+        self.assertEqual(claude["version"], package["version"])
+        self.assertEqual(marketplace["plugins"][0]["version"], package["version"])
+        self.assertEqual(easy_cr_cli.VERSION, package["version"])
         self.assertTrue((PLUGIN_DIR / "skills" / "easy-cr" / "SKILL.md").is_file())
         self.assertTrue((PLUGIN_DIR / "bin" / "easy-cr").is_file())
 
