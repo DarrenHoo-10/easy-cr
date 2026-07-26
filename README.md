@@ -4,7 +4,7 @@
 
 Easy CR 是面向 Codex 和 Claude Code 的本地代码评审插件。它不再让评审者从文件目录猜测业务逻辑，而是按照“请求进入 → 条件判断 → 状态变化 → 返回结果”的顺序组织改动，并生成一份可直接在浏览器中打开的单文件 HTML。
 
-![Easy CR 评审页面](https://raw.githubusercontent.com/DarrenHoo-10/easy-cr/main/docs/images/easy-cr-review.jpg)
+![Easy CR 评审页面](https://raw.githubusercontent.com/DarrenHoo-10/easy-cr/7317ac9674293b4d4d48ceca71b4e9c54dc470f0/docs/images/easy-cr-review.jpg)
 
 ## 你可以用它做什么
 
