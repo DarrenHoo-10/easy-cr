@@ -1,0 +1,35 @@
+{
+  "name": "easy-cr",
+  "displayName": "Easy CR",
+  "description": "Restricted loopback semantic references and code navigation for Easy CR HTML reviews.",
+  "version": "4.0.0",
+  "publisher": "bytedance",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "bundle": "node esbuild.js",
+    "test": "npm run compile && node --test test/*.test.mjs",
+    "vscode:prepublish": "npm run bundle",
+    "package": "vsce package --no-dependencies --allow-missing-repository -o easy-cr.vsix"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.2.1",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.3"
+  }
+}

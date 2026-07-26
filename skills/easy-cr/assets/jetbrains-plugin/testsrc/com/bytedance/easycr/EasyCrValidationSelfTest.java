@@ -14,17 +14,21 @@ public final class EasyCrValidationSelfTest {
         require(!EasyCrValidation.tokenMatches("secret".getBytes(StandardCharsets.UTF_8), "other"), "bad token");
 
         EasyCrValidation.validateReviewInputs("HEAD^", 1, 1, 10);
-        EasyCrValidation.validateSymbol("CheckConfirmProposalTime");
-        expectFailure(() -> EasyCrValidation.validateSymbol("bad-symbol"));
+        expectFailure(() -> EasyCrValidation.validateReviewInputs("bad revision!", 1, 1, 10));
+        expectFailure(() -> EasyCrValidation.validateReviewInputs("HEAD^", 0, 1, 10));
 
         Path root = Files.createTempDirectory("easy-cr-validation").toRealPath();
-        Path file = root.resolve("sample.go");
-        Files.writeString(file, "package sample\n// 中文\n");
-        require(EasyCrValidation.resolveGoFile(root, "sample.go").equals(file), "repo file");
-        expectFailure(() -> EasyCrValidation.resolveGoFile(root, "../outside.go"));
-        require(EasyCrValidation.editorColumn(file, 2, 4) == 3, "utf8 to utf16");
+        Path goFile = root.resolve("sample.go");
+        Files.writeString(goFile, "package sample\n// 中文\n");
+        Path javaFile = root.resolve("Sample.java");
+        Files.writeString(javaFile, "class Sample {}\n");
+        require(EasyCrValidation.resolveSourceFile(root, "sample.go").equals(goFile), "go repo file");
+        require(EasyCrValidation.resolveSourceFile(root, "Sample.java").equals(javaFile), "java repo file");
+        expectFailure(() -> EasyCrValidation.resolveSourceFile(root, "../outside.go"));
+        expectFailure(() -> EasyCrValidation.resolveSourceFile(root, "missing.go"));
+        require(EasyCrValidation.editorColumn(goFile, 2, 4) == 3, "utf8 to utf16");
         require(EasyCrValidation.utf8ByteColumn("// 中文", 3) == 4, "utf16 to utf8");
-        expectFailure(() -> EasyCrValidation.editorColumn(file, 2, 5));
+        expectFailure(() -> EasyCrValidation.editorColumn(goFile, 2, 5));
     }
 
     private static void require(boolean value, String message) {

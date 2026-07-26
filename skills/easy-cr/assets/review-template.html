@@ -82,9 +82,8 @@ h1 { margin:0; font-size:20px; letter-spacing:.1px }
 .diff { overflow:auto; font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; tab-size:4 }
 .line { min-width:max-content; white-space:pre; display:grid; grid-template-columns:76px minmax(max-content,1fr) }
 .line > span { display:block; padding:0 14px }
-.code-identifier { border-radius:2px }
-body.semantic-enabled .code-identifier { cursor:pointer }
-body.semantic-enabled .code-identifier:hover { color:var(--yellow); background:color-mix(in srgb,var(--yellow) 13%,transparent); text-decoration:underline }
+body.semantic-enabled .line.add > span,
+body.semantic-enabled .line.ctx > span { cursor:pointer }
 .line-no { position:sticky; left:0; z-index:1; display:grid; grid-template-columns:1fr 1fr; gap:4px; min-height:18px; padding:0 6px; border:0; border-right:1px solid var(--border); color:var(--muted); background:var(--gutter); font:10px/18px ui-monospace,SFMono-Regular,monospace; cursor:pointer }
 .line-no:hover { color:var(--text); background:color-mix(in srgb,var(--blue) 20%,var(--panel)) }
 .line.selected { box-shadow:inset 3px 0 var(--yellow); background:var(--selected) !important }
@@ -251,9 +250,15 @@ const referencePopover = document.getElementById('reference-popover');
 const referenceTitle = document.getElementById('reference-title');
 const referenceContent = document.getElementById('reference-content');
 const semantic = report.semantic || {mode:'none'};
+const semanticEnabled = Boolean(
+  (semantic.mode === 'editor' || semantic.mode === 'goland')
+  && semantic.endpoint
+  && semantic.token
+);
+const editorName = semantic.displayName || 'GoLand';
 let commentOpenTimer = null;
 let commentCloseTimer = null;
-if (semantic.mode === 'goland') document.body.classList.add('semantic-enabled');
+if (semanticEnabled) document.body.classList.add('semantic-enabled');
 
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
@@ -343,10 +348,62 @@ function showReferenceStatus(symbol, message, rect, error = false) {
   positionReferencePopover(rect);
 }
 
-async function postSemantic(path, payload) {
-  if (semantic.mode !== 'goland' || !semantic.endpoint || !semantic.token) {
-    throw new Error('Easy CR 当前未启用 GoLand 联动');
+function sleep(ms) {
+  return new Promise(resolve => window.setTimeout(resolve, ms));
+}
+
+function openExternalUrl(url) {
+  if (!url) return false;
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.rel = 'noopener';
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    return true;
+  } catch (_) {
+    try {
+      window.location.href = url;
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
+}
+
+function editorFileUrl(filePath, line, column) {
+  const absolute = `${String(report.repo || '').replace(/\/$/, '')}/${String(filePath || '').replace(/^\//, '')}`;
+  const editor = semantic.editor || 'vscode';
+  if (editor === 'vscode') {
+    // VS Code accepts 1-based line/column in the official file URI.
+    return `vscode://file${absolute}:${Number(line) || 1}:${Number(column) || 1}`;
+  }
+  if (editor === 'goland' || editor === 'idea') {
+    const ide = editor === 'idea' ? 'idea' : 'goland';
+    const project = String(report.repo || '').split('/').filter(Boolean).pop() || '';
+    const pathWithPos = `${String(filePath || '').replace(/^\//, '')}:${Number(line) || 1}:${Number(column) || 1}`;
+    return `jetbrains://${ide}/navigate/reference?project=${encodeURIComponent(project)}&path=${encodeURIComponent(pathWithPos)}`;
+  }
+  return semantic.launchUri || '';
+}
+
+function focusEditorWindow(filePath, line, column) {
+  // User-gesture friendly fallback when the editor opened the buffer but stayed in background.
+  return openExternalUrl(editorFileUrl(filePath, line, column));
+}
+
+function launchEditorApp() {
+  // Prefer the configured launch URI (opens app + project when possible).
+  if (semantic.launchUri && openExternalUrl(semantic.launchUri)) {
+    return true;
+  }
+  // Fallback: open the repository root via the editor-specific scheme.
+  return focusEditorWindow('', 1, 1);
+}
+
+async function fetchSemantic(path, payload) {
   const response = await fetch(`${semantic.endpoint}${path}`, {
     method:'POST',
     headers:{'Content-Type':'application/json'},
@@ -365,19 +422,67 @@ async function postSemantic(path, payload) {
   return result;
 }
 
+function isConnectionError(error) {
+  return error instanceof TypeError || /Failed to fetch|NetworkError|Load failed|ECONNREFUSED/i.test(String(error && error.message || error || ''));
+}
+
+async function postSemantic(path, payload, options = {}) {
+  if (!semanticEnabled) {
+    throw new Error(`Easy CR 当前未启用 ${editorName} 联动`);
+  }
+  const {
+    onStatus = null,
+    launchIfNeeded = true,
+    retries = 12,
+    intervalMs = 1500,
+  } = options;
+  try {
+    return await fetchSemantic(path, payload);
+  } catch (error) {
+    if (!launchIfNeeded || !isConnectionError(error)) throw error;
+    if (onStatus) onStatus(`无法连接 ${editorName}，正在尝试启动…`);
+    launchEditorApp();
+    let lastError = error;
+    for (let attempt = 1; attempt <= retries; attempt += 1) {
+      if (onStatus) {
+        onStatus(`正在等待 ${editorName} 扩展就绪（${attempt}/${retries}）…`);
+      }
+      await sleep(intervalMs);
+      try {
+        return await fetchSemantic(path, payload);
+      } catch (retryError) {
+        lastError = retryError;
+        if (!isConnectionError(retryError)) throw retryError;
+      }
+    }
+    throw new Error(
+      `无法连接 ${editorName}。已尝试启动，请确认 ${editorName} 已打开本仓库并完成扩展加载后重试`
+    );
+  }
+}
+
 async function openReference(reference, item) {
   const hint = item.querySelector('.reference-hint');
-  hint.textContent = '正在 GoLand 中定位…';
+  hint.textContent = `正在 ${editorName} 中定位…`;
+  hint.style.color = '';
   try {
     await postSemantic('/api/open', {
       filePath:reference.path,
       line:reference.line,
       column:reference.column
+    }, {
+      onStatus: message => { hint.textContent = message; },
     });
-    hint.textContent = '已定位';
+    focusEditorWindow(reference.path, reference.line, reference.column);
+    hint.textContent = `已在 ${editorName} 打开，若未切到前台请点一下 ${editorName} 窗口`;
   } catch (error) {
-    hint.textContent = error instanceof TypeError
-      ? '无法连接 GoLand，请启动或重启 GoLand'
+    // API failed: still try the official URI as a last-resort navigation path.
+    if (focusEditorWindow(reference.path, reference.line, reference.column)) {
+      hint.textContent = `已请求 ${editorName} 打开该位置；若扩展未就绪，请等待 ${editorName} 加载后重试`;
+      return;
+    }
+    hint.textContent = isConnectionError(error)
+      ? `无法连接 ${editorName}，请启动或重启 ${editorName}`
       : error.message;
     hint.style.color = 'var(--red)';
   }
@@ -385,10 +490,11 @@ async function openReference(reference, item) {
 
 function renderReferences(payload, rect) {
   const references = Array.isArray(payload.references) ? payload.references : [];
-  referenceTitle.textContent = `${payload.symbol} · ${references.length} 处引用`;
+  const symbol = payload.symbol || '选中位置';
+  referenceTitle.textContent = `${symbol} · ${references.length} 处引用`;
   referenceContent.replaceChildren();
   if (!references.length) {
-    showReferenceStatus(payload.symbol, '未找到项目内引用', rect);
+    showReferenceStatus(symbol, '未找到项目内引用', rect);
     return;
   }
   const list = document.createElement('div');
@@ -405,7 +511,7 @@ function renderReferences(payload, rect) {
     preview.textContent = reference.preview || '（空行）';
     const hint = document.createElement('div');
     hint.className = 'reference-hint';
-    hint.textContent = '点击后在 GoLand 中定位到该调用位置';
+    hint.textContent = `点击后在 ${editorName} 中定位到该调用位置`;
     item.append(location, preview, hint);
     item.addEventListener('click', () => openReference(reference, item));
     list.appendChild(item);
@@ -414,36 +520,80 @@ function renderReferences(payload, rect) {
   positionReferencePopover(rect);
 }
 
+function caretFromPoint(x, y) {
+  if (document.caretRangeFromPoint) {
+    const range = document.caretRangeFromPoint(x, y);
+    return range ? {node: range.startContainer, offset: range.startOffset} : null;
+  }
+  if (document.caretPositionFromPoint) {
+    const position = document.caretPositionFromPoint(x, y);
+    return position ? {node: position.offsetNode, offset: position.offset} : null;
+  }
+  return null;
+}
+
+const UTF8_ENCODER = new TextEncoder();
+
+function clickByteColumn(line, clientX, clientY) {
+  const codeSpan = line.querySelector(':scope > span');
+  const caret = caretFromPoint(clientX, clientY);
+  if (!caret || !codeSpan.contains(caret.node)) return null;
+  const utf16Offset = offsetInside(codeSpan, caret.node, caret.offset);
+  if (utf16Offset < 1) return null;
+  const beforeCaret = codeSpan.textContent.slice(1, utf16Offset);
+  return UTF8_ENCODER.encode(beforeCaret).length + 1;
+}
+
 async function queryReferences(event) {
-  if (semantic.mode !== 'goland' || !event.metaKey) return;
+  if (!semanticEnabled || !event.metaKey) return;
   if (window.getSelection()?.toString()) return;
-  const identifier = event.target.closest('.code-identifier');
-  const line = identifier?.closest('.line');
+  const line = event.target.closest('.line');
   const card = line?.closest('.file-card');
-  if (!identifier || !line || !card || !card.dataset.path.endsWith('.go')) return;
+  if (!line || !card || !card.dataset.path) return;
   if (!line.dataset.newLine || line.classList.contains('del') || line.classList.contains('meta') || line.classList.contains('hunk')) return;
-  const symbol = identifier.dataset.symbol;
-  const byteColumn = Number(identifier.dataset.column);
-  const anchor = identifier.getBoundingClientRect();
-  showReferenceStatus(symbol, '正在查询项目内语义引用…', anchor);
+  const anchor = {left:event.clientX, right:event.clientX, top:event.clientY, bottom:event.clientY};
+  const byteColumn = clickByteColumn(line, event.clientX, event.clientY);
+  if (byteColumn === null) {
+    showReferenceStatus('', '当前浏览器无法解析点击位置', anchor, true);
+    return;
+  }
+  showReferenceStatus('', '正在查询项目内语义引用…', anchor);
   try {
     const payload = await postSemantic('/api/references', {
       filePath:card.dataset.path,
       line:Number(line.dataset.newLine),
-      column:byteColumn,
-      symbol
+      column:byteColumn
+    }, {
+      onStatus: message => showReferenceStatus('', message, anchor),
     });
     const references = Array.isArray(payload.references) ? payload.references : [];
-    if (references.length <= 1) {
-      closeReferencePopover();
+    if (payload.opened || references.length <= 1) {
+      // 0/1 引用会由编辑器直接打开；保留短暂反馈，避免“弹层一闪而过像失败”。
+      if (payload.opened) {
+        const target = references[0];
+        if (target) {
+          focusEditorWindow(target.path, target.line, target.column);
+        } else {
+          focusEditorWindow(card.dataset.path, Number(line.dataset.newLine), byteColumn);
+        }
+        const message = references.length === 1
+          ? `已在 ${editorName} 打开唯一引用`
+          : `已在 ${editorName} 打开当前位置`;
+        showReferenceStatus(payload.symbol || '', message, anchor);
+        window.setTimeout(() => {
+          if (referencePopover.classList.contains('visible')) closeReferencePopover();
+        }, 1400);
+      } else {
+        closeReferencePopover();
+      }
       return;
     }
     renderReferences(payload, anchor);
   } catch (error) {
-    const message = error instanceof TypeError
-      ? '无法连接 GoLand，请启动或重启 GoLand'
+    const message = isConnectionError(error)
+      ? `无法连接 ${editorName}，请启动 ${editorName} 并打开本仓库后重试`
       : error.message;
-    showReferenceStatus(symbol, message, anchor, true);
+    showReferenceStatus('', message, anchor, true);
   }
 }
 
@@ -640,20 +790,25 @@ document.addEventListener('mousedown', event => {
   if (commentsPopover.classList.contains('visible') && !commentsPopover.contains(event.target) && !commentCountButton.contains(event.target)) {
     closeCommentsPopover();
   }
-  if (referencePopover.classList.contains('visible') && !referencePopover.contains(event.target) && !event.target.closest('.code-identifier')) {
+  // Keep the reference popover open for in-popover clicks and for Command+click source lines.
+  if (
+    referencePopover.classList.contains('visible')
+    && !referencePopover.contains(event.target)
+    && !event.target.closest('.line > span')
+    && !event.metaKey
+  ) {
     closeReferencePopover();
   }
 });
 document.addEventListener('scroll', hideSelectionMenu, true);
 window.addEventListener('scroll', () => {
   if (activeComposer) clearSelection();
-  closeReferencePopover();
+  // Don't dismiss reference results on incidental page scroll while the user inspects them.
 }, {passive: true});
 window.addEventListener('resize', () => {
   hideSelectionMenu();
   clearSelection();
   closeCommentsPopover();
-  closeReferencePopover();
 });
 
 function openTextComposer(draft) {

@@ -1,0 +1,37 @@
+{
+  "id": "easy-cr-intellij-idea-support",
+  "name": "easy-cr-intellij-idea-support",
+  "title": "Easy CR IntelliJ IDEA 与通用 JetBrains Adapter",
+  "description": "先将现有 GoLand 专用协议改造成编辑器无关的位置协议，再把 GoLand 插件重构为同时支持 GoLand 和 IntelliJ IDEA 的通用 JetBrains 插件。",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "bytedance",
+  "assignee": "bytedance",
+  "createdAt": "2026-07-25",
+  "completedAt": "2026-07-26",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "07-24-easy-cr-idea-vscode-support",
+  "relatedFiles": [
+    "skills/easy-cr/assets/review-template.html",
+    "skills/easy-cr/assets/goland-plugin/",
+    "skills/easy-cr/scripts/easy_cr_config.py",
+    "skills/easy-cr/scripts/easy_cr_cli.py",
+    "skills/easy-cr/scripts/setup_goland_plugin.py",
+    "skills/easy-cr/tests/test_easy_cr.py"
+  ],
+  "notes": "protocol v2 + jetbrains adapter + CLI registry + docs done; interactive IDE smoke (0/1/N refs) left for manual verification.",
+  "meta": {
+    "editor": "idea",
+    "owns_shared_protocol": true,
+    "depends_on": []
+  }
+}

@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/07-25-easy-cr-intellij-idea-support/prd.md", "reason": "逐项核对 IDEA 与 GoLand 的验收标准。"}
+{"file": ".trellis/tasks/07-25-easy-cr-intellij-idea-support/design.md", "reason": "检查协议兼容、安全边界和 JetBrains API 使用是否符合设计。"}

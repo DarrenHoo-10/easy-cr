@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/07-24-easy-cr-idea-vscode-support/prd.md", "reason": "父任务的多编辑器总体需求与边界。"}
+{"file": ".trellis/tasks/07-25-easy-cr-intellij-idea-support/design.md", "reason": "VS Code Adapter 必须消费该任务冻结的 protocol v2。"}
+{"file": ".trellis/tasks/07-25-easy-cr-vscode-support/prd.md", "reason": "VS Code 子任务的需求和验收标准。"}
+{"file": ".trellis/tasks/07-25-easy-cr-vscode-support/design.md", "reason": "VS Code extension 的实施架构、安全与分发决策。"}

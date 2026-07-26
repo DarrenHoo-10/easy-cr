@@ -48,3 +48,26 @@ Create one UTF-8 JSON manifest:
 - group 标题使用业务动作，不使用“API 层”“Service 层”等纯技术分层。
 - 不得引用本次 Diff 之外的文件。
 - 不写入原始 HTML。
+
+## Editor protocol (v2)
+
+Semantic navigation is independent of the manifest. Generated HTML embeds an editor-neutral payload from the shared config, then sends position requests:
+
+```json
+{
+  "token": "...",
+  "projectPath": "/absolute/repo",
+  "reviewType": "revision",
+  "fingerprint": "...",
+  "base": "HEAD^",
+  "context": 10,
+  "filePath": "service/example.go",
+  "line": 42,
+  "column": 18
+}
+```
+
+- `line` is 1-based.
+- `column` is a 1-based UTF-8 byte offset into the displayed source line after the leading Diff marker.
+- HTML does not infer or send a symbol name; the editor adapter resolves the PSI/LSP target.
+- Compatible responses may include an optional `symbol` plus `opened` and `references`.

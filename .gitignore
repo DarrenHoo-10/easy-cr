@@ -5,3 +5,10 @@ __pycache__/
 build/
 dist/
 *.jar
+
+# VS Code extension build artifacts
+skills/easy-cr/assets/vscode-extension/node_modules/
+skills/easy-cr/assets/vscode-extension/out/
+skills/easy-cr/assets/vscode-extension/dist/
+skills/easy-cr/assets/vscode-extension/*.vsix
+skills/easy-cr/assets/vscode-extension/package-lock.json

@@ -3,7 +3,7 @@
   "name": "easy-cr-idea-vscode-support",
   "title": "Easy CR 支持 IntelliJ IDEA 与 VS Code",
   "description": "设计 Easy CR 在现有 GoLand 模式基础上支持 IntelliJ IDEA 与 VS Code 的编辑器协议、插件、CLI 配置、安装诊断与兼容回退方案。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,16 +11,19 @@
   "creator": "bytedance",
   "assignee": "bytedance",
   "createdAt": "2026-07-24",
-  "completedAt": null,
+  "completedAt": "2026-07-26",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "07-25-easy-cr-intellij-idea-support",
+    "07-25-easy-cr-vscode-support"
+  ],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "Children IDEA + VS Code adapters completed for protocol v2 multi-editor support.",
   "meta": {}
 }

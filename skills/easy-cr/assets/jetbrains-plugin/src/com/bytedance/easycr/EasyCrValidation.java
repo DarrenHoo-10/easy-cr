@@ -9,7 +9,6 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 final class EasyCrValidation {
-    private static final Pattern SYMBOL = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     private static final Pattern REVISION = Pattern.compile("[A-Za-z0-9_./^~{}@:+-]{1,200}");
     private static final Set<String> LOOPBACK_HOSTS = Set.of("127.0.0.1", "localhost");
 
@@ -44,23 +43,22 @@ final class EasyCrValidation {
         }
     }
 
-    static void validateSymbol(String symbol) {
-        if (!SYMBOL.matcher(symbol).matches()) {
-            throw new IllegalArgumentException("Go 标识符非法");
-        }
-    }
-
-    static Path resolveGoFile(Path root, String relativePath) throws IOException {
+    static Path resolveSourceFile(Path root, String relativePath) throws IOException {
         if (relativePath.isBlank() || relativePath.indexOf('\0') >= 0) {
             throw new IllegalArgumentException("文件路径非法");
         }
         Path normalized = root.resolve(relativePath).normalize();
         if (!normalized.startsWith(root)) {
-            throw new IllegalArgumentException("目标必须是仓库内已有 Go 文件");
+            throw new IllegalArgumentException("目标必须是仓库内已有文件");
         }
-        Path target = normalized.toRealPath();
-        if (!target.startsWith(root) || !target.toString().endsWith(".go") || !Files.isRegularFile(target)) {
-            throw new IllegalArgumentException("目标必须是仓库内已有 Go 文件");
+        final Path target;
+        try {
+            target = normalized.toRealPath();
+        } catch (IOException error) {
+            throw new IllegalArgumentException("目标必须是仓库内已有文件", error);
+        }
+        if (!target.startsWith(root) || !Files.isRegularFile(target)) {
+            throw new IllegalArgumentException("目标必须是仓库内已有文件");
         }
         return target;
     }

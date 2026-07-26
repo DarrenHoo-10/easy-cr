@@ -1,6 +1,6 @@
 ---
 name: easy-cr
-description: Generate an interactive HTML code review organized from top to bottom by business timeline, with comments, replies, themes, filtering, and optional GoLand semantic references and navigation. Use when the user wants an easy-to-read CR artifact, wants to review a branch or commit in HTML, or asks to configure the editor used by Easy CR.
+description: Generate an interactive HTML code review organized from top to bottom by business timeline, with comments, replies, themes, filtering, and optional GoLand/IntelliJ IDEA/VS Code semantic references and navigation. Use when the user wants an easy-to-read CR artifact, wants to review a branch or commit in HTML, or asks to configure the editor used by Easy CR.
 ---
 
 # Easy CR
@@ -17,9 +17,11 @@ easy-cr status --json
 
 When `editor.configured` is `null`, ask once:
 
-> 是否启用 GoLand 联动？启用后可在评审页查看语义引用并快速跳转代码。
+> 是否启用编辑器联动？可选择 GoLand、IntelliJ IDEA、VS Code，或保持基础模式。启用后可在评审页查看语义引用并快速跳转代码。
 
-- If accepted, run `easy-cr config editor goland`.
+- If the user chooses GoLand, run `easy-cr config editor goland`.
+- If the user chooses IntelliJ IDEA, run `easy-cr config editor idea`.
+- If the user chooses VS Code, run `easy-cr config editor vscode`.
 - If declined or deferred, run `easy-cr config editor none`.
 - Do not ask again after either choice is stored.
 
@@ -73,19 +75,19 @@ The base HTML always supports:
 - Comment edit, delete, reply, summary popover and copy.
 - `Enter` saves; `Command+Enter` and `Shift+Enter` insert a newline.
 
-When GoLand is configured:
+When an enhanced editor is configured:
 
-- Only Command+click on eligible Go identifiers requests references.
-- With no references, GoLand opens the clicked source position.
-- With one reference, GoLand opens that call location directly.
-- With multiple references, HTML keeps focus and shows a choice list; clicking one opens its actual call location in GoLand.
+- Command+click on added/context source lines sends a position request (`filePath + line + UTF-8 byte column`).
+- With no references, the editor opens the clicked source position.
+- With one reference, the editor opens that call location directly.
+- With multiple references, HTML keeps focus and shows a choice list; clicking one opens its actual call location in the editor.
 - Loading, empty and error states stay in the reference popover; there is no bottom-right semantic toast.
 
 When no editor is configured, the page contains no editor token or endpoint and does not issue semantic requests.
 
 ## Boundaries
 
-- GoLand is the only enhanced editor in the first version.
-- Do not start `gopls`, a Python helper, MCP, or another background service.
+- Enhanced editors are selected from the built-in registry: `goland`, `idea`, and `vscode`.
+- Do not start `gopls`, a Python helper, MCP, or another background service outside the installed editor extension.
 - Do not infer online behavior from code alone.
 - Do not organize the main review by technical layer or directory.
