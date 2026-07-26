@@ -45,7 +45,7 @@ from setup_vscode_extension import (
 )
 
 
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 SKILL_DIR = SCRIPT_DIR.parent
 REPO_ROOT = SKILL_DIR.parents[1]
 SETUP_JETBRAINS_SCRIPT = SCRIPT_DIR / "setup_jetbrains_plugin.py"
@@ -84,13 +84,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     editor_parser.add_argument(
         "--no-launch",
         action="store_true",
-        help="只写入配置/安装扩展，不自动启动编辑器",
+        help=argparse.SUPPRESS,
     )
     editor_parser.add_argument(
         "--project",
         type=Path,
         default=None,
-        help="启动编辑器时打开的项目路径，默认当前目录",
+        help=argparse.SUPPRESS,
     )
 
     open_parser = subparsers.add_parser(
@@ -286,13 +286,17 @@ def configure_editor(
     editor: str,
     config_path: Path = CONFIG_PATH,
     config_dir: Path = CONFIG_DIR,
-    *,
-    project_path: Path | None = None,
-    launch: bool = True,
-) -> None:
+) -> bool:
+    """Select an editor, installing its adapter only when setup is incomplete.
+
+    Returns True when an adapter installation was performed.
+    """
     if editor == "none":
         write_editor("none", config_path)
-        return
+        return False
+    if editor_setup_ready(editor, config_dir=config_dir):
+        write_editor(editor, config_path)
+        return False
     token_path = token_path_for_editor(editor, config_dir)
     if editor in JETBRAINS_EDITOR_IDS:
         result = run([
@@ -315,13 +319,7 @@ def configure_editor(
     if result.stdout.strip():
         print(result.stdout.strip())
     write_editor(editor, config_path)
-    if launch:
-        try:
-            app = launch_editor(editor, project_path)
-            display = editor_descriptor(editor).display_name
-            print(f"已尝试启动 {display}：{app}")
-        except RuntimeError as error:
-            print(f"提示：未能自动启动编辑器（{error}）")
+    return True
 
 
 def choose_editor() -> str:
@@ -353,6 +351,37 @@ def installed_jetbrains_plugin(editor: str) -> Path | None:
         reverse=True,
     )
     return candidates[0] if candidates else None
+
+
+def editor_setup_ready(
+    editor: str,
+    *,
+    config_dir: Path = CONFIG_DIR,
+) -> bool:
+    """Whether the selected editor already has an adapter and valid token."""
+    try:
+        read_token(token_path_for_editor(editor, config_dir), editor)
+    except ConfigError:
+        return False
+    if editor in JETBRAINS_EDITOR_IDS:
+        return installed_jetbrains_plugin(editor) is not None
+    if editor == "vscode":
+        try:
+            code_command = resolve_code_command()
+        except RuntimeError:
+            return False
+        listed = run(
+            [str(code_command), "--list-extensions"],
+            allow_failure=True,
+        )
+        if listed.returncode:
+            return False
+        extension_ids = {
+            line.strip().partition("@")[0].lower()
+            for line in listed.stdout.splitlines()
+        }
+        return "bytedance.easy-cr" in extension_ids
+    return False
 
 
 def codex_installation_state(command: Path | None) -> dict[str, Any]:
@@ -816,15 +845,18 @@ def handle_init(args: argparse.Namespace) -> int:
         print(f"已配置 {client}")
 
     editor = args.editor or choose_editor()
-    configure_editor(editor, project_path=Path.cwd(), launch=True)
+    installed = configure_editor(editor)
     if editor == "none":
         print("Easy CR 已使用基础模式。")
     else:
         display = editor_descriptor(editor).display_name
-        print(
-            f"{display} 扩展已安装。"
-            f"若窗口已在运行，请 Reload/重启一次使扩展生效。"
-        )
+        if installed:
+            print(
+                f"{display} 扩展已安装。"
+                f"若窗口已在运行，请 Reload/重启一次使扩展生效。"
+            )
+        else:
+            print(f"已切换到 {display} 模式，现有扩展和 token 保持不变。")
     return 0
 
 
@@ -847,19 +879,21 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "init":
             return handle_init(args)
         if args.command == "config":
-            configure_editor(
-                args.editor,
-                project_path=(args.project or Path.cwd()),
-                launch=not args.no_launch and args.editor != "none",
-            )
+            installed = configure_editor(args.editor)
             if args.editor == "none":
                 print("已切换为基础模式。")
             else:
                 display = editor_descriptor(args.editor).display_name
-                print(
-                    f"已启用 {display} 模式。"
-                    f"若扩展未生效，请在 {display} 中 Reload Window 或重启一次。"
-                )
+                if installed:
+                    print(
+                        f"已安装并启用 {display} 模式。"
+                        f"若扩展未生效，请在 {display} 中 Reload Window 或重启一次。"
+                    )
+                else:
+                    print(
+                        f"已切换到 {display} 模式，"
+                        "检测到现有扩展和 token，未重复安装。"
+                    )
             return 0
         if args.command == "open":
             return handle_open(args)

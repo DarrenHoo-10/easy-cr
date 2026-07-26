@@ -131,10 +131,12 @@ easy-cr config editor idea
 easy-cr config editor vscode
 ```
 
-配置编辑器并打开指定项目：
+如果该编辑器的 Easy CR 扩展和本机 token 已存在，命令只切换当前配置，不会重复安装扩展，也不会启动或重启编辑器。首次配置或本地文件不完整时，Easy CR 才会安装对应扩展。
+
+需要打开指定项目时，显式执行：
 
 ```bash
-easy-cr config editor idea --project /path/to/repository
+easy-cr open --project /path/to/repository
 ```
 
 启动当前配置的编辑器并打开当前项目：
@@ -162,7 +164,7 @@ easy-cr doctor --launch
 | `easy-cr init` | 初始化客户端与编辑器 |
 | `easy-cr status` | 查看当前安装和配置 |
 | `easy-cr status --json` | 输出便于诊断的 JSON 状态 |
-| `easy-cr config editor <editor>` | 切换基础模式或增强编辑器 |
+| `easy-cr config editor <editor>` | 切换基础模式或增强编辑器，不自动启动 |
 | `easy-cr open` | 使用当前编辑器打开项目 |
 | `easy-cr doctor` | 检查客户端、插件和编辑器联动 |
 | `easy-cr doctor --launch` | 启动编辑器后再次检查 |
