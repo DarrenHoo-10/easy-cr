@@ -1,6 +1,5 @@
 package com.bytedance.easycr;
 
-import com.goide.psi.GoReferencesSearch;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -27,6 +26,7 @@ import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiNamedElement;
 import com.intellij.psi.PsiReference;
 import com.intellij.psi.search.GlobalSearchScope;
+import com.intellij.psi.search.searches.ReferencesSearch;
 import com.intellij.ui.AppIcon;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
@@ -47,6 +47,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -57,13 +58,9 @@ public final class EasyCrHttpService implements Disposable {
     private static final Gson GSON = new Gson();
     private static final int MAX_BODY_BYTES = 32 * 1024;
     private static final int MAX_REFERENCES = 500;
-    private static final Path TOKEN_PATH = Path.of(
-            System.getProperty("user.home"),
-            ".config",
-            "easy-cr",
-            "goland-token"
-    );
+    private static final int PROTOCOL_VERSION = 2;
 
+    private final EditorDescriptor descriptor = loadDescriptor();
     private final ExecutorService executor = Executors.newFixedThreadPool(2, runnable -> {
         Thread thread = new Thread(runnable, "easy-cr-http");
         thread.setDaemon(true);
@@ -74,17 +71,38 @@ public final class EasyCrHttpService implements Disposable {
 
     public EasyCrHttpService() {
         try {
-            token = readToken();
-            server = HttpServer.create(new InetSocketAddress("127.0.0.1", 64343), 0);
+            token = readToken(descriptor.tokenPath());
+            server = HttpServer.create(new InetSocketAddress("127.0.0.1", descriptor.port()), 0);
             server.createContext("/api/references", exchange -> handle(exchange, true));
             server.createContext("/api/open", exchange -> handle(exchange, false));
             server.createContext("/api/health", this::handleHealth);
             server.setExecutor(executor);
             server.start();
-            LOG.info("Easy CR endpoint started at http://127.0.0.1:64343");
+            LOG.info("Easy CR " + descriptor.editorId() + " endpoint started at " + descriptor.endpoint());
         } catch (Exception error) {
             LOG.error("Unable to start Easy CR endpoint", error);
         }
+    }
+
+    private static EditorDescriptor loadDescriptor() {
+        Properties properties = new Properties();
+        try (InputStream input = EasyCrHttpService.class.getResourceAsStream("/easycr.properties")) {
+            if (input != null) {
+                properties.load(input);
+            }
+        } catch (IOException error) {
+            LOG.warn("Unable to read easycr.properties, using GoLand defaults", error);
+        }
+        String editorId = properties.getProperty("editor", "goland");
+        String displayName = properties.getProperty("displayName", "GoLand");
+        int port;
+        try {
+            port = Integer.parseInt(properties.getProperty("port", "64343"));
+        } catch (NumberFormatException error) {
+            port = 64343;
+        }
+        String tokenFile = properties.getProperty("tokenFile", "goland-token");
+        return new EditorDescriptor(editorId, displayName, port, tokenFile);
     }
 
     private void handleHealth(HttpExchange exchange) throws IOException {
@@ -116,13 +134,15 @@ public final class EasyCrHttpService implements Disposable {
         JsonObject result = new JsonObject();
         result.addProperty("ready", true);
         result.addProperty("plugin", "easy-cr");
+        result.addProperty("editor", descriptor.editorId());
+        result.addProperty("protocolVersion", PROTOCOL_VERSION);
         respond(exchange, 200, result, origin);
     }
 
-    private static byte[] readToken() throws IOException {
-        String value = Files.readString(TOKEN_PATH, StandardCharsets.UTF_8).trim();
+    private static byte[] readToken(Path tokenPath) throws IOException {
+        String value = Files.readString(tokenPath, StandardCharsets.UTF_8).trim();
         if (!value.matches("[A-Za-z0-9_-]{32,}")) {
-            throw new IOException("Invalid Easy CR token; run configure.py set goland");
+            throw new IOException("Invalid Easy CR token; run easy-cr config editor");
         }
         return value.getBytes(StandardCharsets.UTF_8);
     }
@@ -159,9 +179,8 @@ public final class EasyCrHttpService implements Disposable {
             requireToken(request);
             RequestContext context = parseContext(request);
             if (queryReferences) {
-                String symbol = stringField(request, "symbol");
-                EasyCrValidation.validateSymbol(symbol);
-                List<ReferenceResult> references = queryReferences(context, symbol);
+                ReferenceQuery query = queryReferences(context);
+                List<ReferenceResult> references = query.references();
                 boolean opened = false;
                 if (references.isEmpty()) {
                     openAt(context.project(), context.target(), context.line(), context.editorColumn());
@@ -171,7 +190,9 @@ public final class EasyCrHttpService implements Disposable {
                     opened = true;
                 }
                 JsonObject result = new JsonObject();
-                result.addProperty("symbol", symbol);
+                if (query.symbol() != null) {
+                    result.addProperty("symbol", query.symbol());
+                }
                 result.addProperty("opened", opened);
                 JsonArray values = new JsonArray();
                 references.forEach(reference -> values.add(reference.toJson()));
@@ -189,7 +210,7 @@ public final class EasyCrHttpService implements Disposable {
             respond(exchange, 409, error(error.getMessage()), origin);
         } catch (Exception error) {
             LOG.warn("Easy CR request failed", error);
-            respond(exchange, 500, error("GoLand 处理失败：" + safeMessage(error)), origin);
+            respond(exchange, 500, error(descriptor.displayName() + " 处理失败：" + safeMessage(error)), origin);
         }
     }
 
@@ -207,50 +228,51 @@ public final class EasyCrHttpService implements Disposable {
         Project project = findOpenProject(projectPath);
         Path root = Path.of(project.getBasePath()).toRealPath();
         validateReview(root, reviewType, fingerprint, base, context);
-        Path target = EasyCrValidation.resolveGoFile(root, filePath);
+        Path target = EasyCrValidation.resolveSourceFile(root, filePath);
         int editorColumn = EasyCrValidation.editorColumn(target, line, column);
         return new RequestContext(project, root, target, line, editorColumn);
     }
 
-    private List<ReferenceResult> queryReferences(RequestContext context, String symbol) {
+    private ReferenceQuery queryReferences(RequestContext context) {
         return ApplicationManager.getApplication().runReadAction(
-                (Computable<List<ReferenceResult>>) () -> findReferences(context, symbol)
+                (Computable<ReferenceQuery>) () -> findReferences(context)
         );
     }
 
-    private static void openReferenceResult(
+    private void openReferenceResult(
             RequestContext context,
             ReferenceResult reference
     ) throws IOException {
-        Path target = EasyCrValidation.resolveGoFile(context.root(), reference.path());
+        Path target = EasyCrValidation.resolveSourceFile(context.root(), reference.path());
         int editorColumn = EasyCrValidation.editorColumn(target, reference.line(), reference.column());
         openAt(context.project(), target, reference.line(), editorColumn);
     }
 
-    private List<ReferenceResult> findReferences(RequestContext context, String symbol) {
+    private ReferenceQuery findReferences(RequestContext context) {
         VirtualFile source = LocalFileSystem.getInstance()
                 .refreshAndFindFileByNioFile(context.target());
         if (source == null) {
-            throw new IllegalStateException("GoLand 无法解析文件：" + context.target());
+            throw new IllegalStateException(descriptor.displayName() + " 无法解析文件：" + context.target());
         }
         PsiFile psiFile = com.intellij.psi.PsiManager.getInstance(context.project())
                 .findFile(source);
         if (psiFile == null) {
-            throw new IllegalStateException("GoLand 无法读取 PSI 文件");
+            throw new IllegalStateException(descriptor.displayName() + " 无法读取 PSI 文件");
         }
         Document document = PsiDocumentManager.getInstance(context.project())
                 .getDocument(psiFile);
         if (document == null) {
-            throw new IllegalStateException("GoLand 无法读取 PSI 文档");
+            throw new IllegalStateException(descriptor.displayName() + " 无法读取 PSI 文档");
         }
         int lineIndex = context.line() - 1;
         int offset = document.getLineStartOffset(lineIndex) + context.editorColumn();
         if (offset >= document.getTextLength()) {
             offset = Math.max(0, document.getTextLength() - 1);
         }
-        PsiElement target = resolveTarget(psiFile, offset, symbol);
+        PsiElement target = resolveTarget(psiFile, offset);
+        String symbol = target instanceof PsiNamedElement named ? named.getName() : null;
         Map<String, ReferenceResult> unique = new LinkedHashMap<>();
-        for (PsiReference reference : GoReferencesSearch.search(
+        for (PsiReference reference : ReferencesSearch.search(
                 target,
                 GlobalSearchScope.projectScope(context.project())
         ).findAll()) {
@@ -268,10 +290,10 @@ public final class EasyCrHttpService implements Disposable {
                 .comparing(ReferenceResult::path)
                 .thenComparingInt(ReferenceResult::line)
                 .thenComparingInt(ReferenceResult::column));
-        return results;
+        return new ReferenceQuery(symbol, results);
     }
 
-    private static PsiElement resolveTarget(PsiFile file, int offset, String symbol) {
+    private static PsiElement resolveTarget(PsiFile file, int offset) {
         PsiElement leaf = file.findElementAt(offset);
         if (leaf == null && offset > 0) {
             leaf = file.findElementAt(offset - 1);
@@ -294,14 +316,14 @@ public final class EasyCrHttpService implements Disposable {
             }
             if (namedCandidate == null
                     && current instanceof PsiNamedElement named
-                    && symbol.equals(named.getName())) {
+                    && named.getName() != null) {
                 namedCandidate = named;
             }
         }
         if (namedCandidate != null) {
             return namedCandidate;
         }
-        throw new IllegalArgumentException("无法解析符号：" + symbol);
+        throw new IllegalArgumentException("当前编辑器无法解析该位置的符号");
     }
 
     private static ReferenceResult toResult(RequestContext context, PsiReference reference) {
@@ -319,7 +341,7 @@ public final class EasyCrHttpService implements Disposable {
         } catch (IOException error) {
             return null;
         }
-        if (!path.startsWith(context.root()) || !path.toString().endsWith(".go")) {
+        if (!path.startsWith(context.root())) {
             return null;
         }
         int offset = element.getTextRange().getStartOffset()
@@ -345,18 +367,18 @@ public final class EasyCrHttpService implements Disposable {
         );
     }
 
-    private static void openAt(Project project, Path target, int oneBasedLine, int zeroBasedColumn) {
+    private void openAt(Project project, Path target, int oneBasedLine, int zeroBasedColumn) {
         Runnable action = () -> {
             VirtualFile file = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(target);
             if (file == null) {
-                throw new IllegalStateException("GoLand 无法解析文件：" + target);
+                throw new IllegalStateException(descriptor.displayName() + " 无法解析文件：" + target);
             }
             Editor editor = FileEditorManager.getInstance(project).openTextEditor(
                     new OpenFileDescriptor(project, file, oneBasedLine - 1, zeroBasedColumn),
                     true
             );
             if (editor == null) {
-                throw new IllegalStateException("GoLand 无法打开文件：" + target);
+                throw new IllegalStateException(descriptor.displayName() + " 无法打开文件：" + target);
             }
             IdeFrame frame = WindowManager.getInstance().getIdeFrame(project);
             if (frame != null) {
@@ -417,12 +439,12 @@ public final class EasyCrHttpService implements Disposable {
         headers.set("Access-Control-Max-Age", "600");
     }
 
-    private static Project findOpenProject(String projectPath) throws IOException {
+    private Project findOpenProject(String projectPath) throws IOException {
         Path requested = Path.of(projectPath).toRealPath();
         return Arrays.stream(ProjectManager.getInstance().getOpenProjects())
                 .filter(project -> matchesProject(project, requested))
                 .findFirst()
-                .orElseThrow(() -> new ReviewConflict("GoLand 未打开项目：" + requested));
+                .orElseThrow(() -> new ReviewConflict(descriptor.displayName() + " 未打开项目：" + requested));
     }
 
     private static boolean matchesProject(Project project, Path requested) {
@@ -449,11 +471,6 @@ public final class EasyCrHttpService implements Disposable {
         String headCommit = head.stdout().trim();
         String currentFingerprint;
         if ("revision".equals(reviewType)) {
-            GitResult dirty = runGit(root, "diff", "--quiet", "HEAD", "--");
-            if (dirty.exitCode() == 1) {
-                throw new ReviewConflict("当前工作区存在 tracked 修改，请重新生成评审页");
-            }
-            requireGitSuccess(dirty, "检查工作区失败");
             currentFingerprint = headCommit;
         } else if ("worktree".equals(reviewType)) {
             GitResult diff = runGit(
@@ -561,6 +578,21 @@ public final class EasyCrHttpService implements Disposable {
         executor.shutdownNow();
     }
 
+    private record EditorDescriptor(String editorId, String displayName, int port, String tokenFile) {
+        String endpoint() {
+            return "http://127.0.0.1:" + port;
+        }
+
+        Path tokenPath() {
+            return Path.of(
+                    System.getProperty("user.home"),
+                    ".config",
+                    "easy-cr",
+                    tokenFile
+            );
+        }
+    }
+
     private record RequestContext(
             Project project,
             Path root,
@@ -568,6 +600,9 @@ public final class EasyCrHttpService implements Disposable {
             int line,
             int editorColumn
     ) {
+    }
+
+    private record ReferenceQuery(String symbol, List<ReferenceResult> references) {
     }
 
     private record ReferenceResult(String path, int line, int column, String preview) {

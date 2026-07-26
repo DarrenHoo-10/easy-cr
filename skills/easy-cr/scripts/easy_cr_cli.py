@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Initialize and diagnose Easy CR for Codex, Claude Code, and GoLand."""
+"""Initialize and diagnose Easy CR for Codex, Claude Code, and editors."""
 
 from __future__ import annotations
 
@@ -16,28 +16,44 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 from easy_cr_config import (
+    CONFIG_DIR,
     CONFIG_PATH,
-    GOLAND_ENDPOINT,
-    TOKEN_PATH,
+    ENHANCED_EDITORS,
+    PROTOCOL_VERSION,
+    VALID_EDITORS,
     ConfigError,
+    editor_descriptor,
+    launch_editor,
     read_editor,
     read_token,
+    token_path_for_editor,
     write_editor,
 )
+from setup_jetbrains_plugin import (
+    JETBRAINS_EDITORS,
+    jetbrains_editor,
+    newest_plugins_dir,
+)
+from setup_vscode_extension import (
+    VSCODE_APP,
+    resolve_code_command,
+)
 
 
-VERSION = "1.1.0"
-SCRIPT_DIR = Path(__file__).resolve().parent
+VERSION = "1.1.1"
 SKILL_DIR = SCRIPT_DIR.parent
 REPO_ROOT = SKILL_DIR.parents[1]
-SETUP_GOLAND_SCRIPT = SCRIPT_DIR / "setup_goland_plugin.py"
+SETUP_JETBRAINS_SCRIPT = SCRIPT_DIR / "setup_jetbrains_plugin.py"
+SETUP_VSCODE_SCRIPT = SCRIPT_DIR / "setup_vscode_extension.py"
 INSTALL_CLI_SCRIPT = REPO_ROOT / "scripts" / "install_cli.py"
 CODEX_APP_COMMAND = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
-GOLAND_APP = Path("/Applications/GoLand.app")
-GOLAND_PLUGIN_ROOT = (
-    Path.home() / "Library" / "Application Support" / "JetBrains"
-)
+CLI_EDITOR_CHOICES = tuple(sorted(VALID_EDITORS))
+JETBRAINS_EDITOR_IDS = frozenset(JETBRAINS_EDITORS)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -46,7 +62,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser("init", help="配置已安装客户端和编辑器")
-    init_parser.add_argument("--editor", choices=("none", "goland"))
+    init_parser.add_argument("--editor", choices=CLI_EDITOR_CHOICES)
     init_parser.add_argument(
         "--client",
         choices=("codex", "claude"),
@@ -64,10 +80,37 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
     )
     editor_parser = config_subparsers.add_parser("editor")
-    editor_parser.add_argument("editor", choices=("none", "goland"))
+    editor_parser.add_argument("editor", choices=CLI_EDITOR_CHOICES)
+    editor_parser.add_argument(
+        "--no-launch",
+        action="store_true",
+        help="只写入配置/安装扩展，不自动启动编辑器",
+    )
+    editor_parser.add_argument(
+        "--project",
+        type=Path,
+        default=None,
+        help="启动编辑器时打开的项目路径，默认当前目录",
+    )
+
+    open_parser = subparsers.add_parser(
+        "open",
+        help="启动当前配置的编辑器并打开项目",
+    )
+    open_parser.add_argument(
+        "--project",
+        type=Path,
+        default=None,
+        help="要打开的项目路径，默认当前目录",
+    )
 
     doctor_parser = subparsers.add_parser("doctor", help="诊断本地安装")
     doctor_parser.add_argument("--json", action="store_true")
+    doctor_parser.add_argument(
+        "--launch",
+        action="store_true",
+        help="若增强编辑器 runtime 未就绪，尝试启动编辑器",
+    )
 
     args = parser.parse_args(argv)
     if (
@@ -242,38 +285,71 @@ def install_cli() -> None:
 def configure_editor(
     editor: str,
     config_path: Path = CONFIG_PATH,
-    token_path: Path = TOKEN_PATH,
+    config_dir: Path = CONFIG_DIR,
+    *,
+    project_path: Path | None = None,
+    launch: bool = True,
 ) -> None:
     if editor == "none":
         write_editor("none", config_path)
         return
-    result = run([
-        sys.executable,
-        str(SETUP_GOLAND_SCRIPT),
-        "--token-file",
-        str(token_path),
-    ])
+    token_path = token_path_for_editor(editor, config_dir)
+    if editor in JETBRAINS_EDITOR_IDS:
+        result = run([
+            sys.executable,
+            str(SETUP_JETBRAINS_SCRIPT),
+            "--editor",
+            editor,
+            "--token-file",
+            str(token_path),
+        ])
+    elif editor == "vscode":
+        result = run([
+            sys.executable,
+            str(SETUP_VSCODE_SCRIPT),
+            "--token-file",
+            str(token_path),
+        ])
+    else:
+        raise ValueError(f"暂不支持通过 CLI 安装编辑器：{editor}")
     if result.stdout.strip():
         print(result.stdout.strip())
-    write_editor("goland", config_path)
+    write_editor(editor, config_path)
+    if launch:
+        try:
+            app = launch_editor(editor, project_path)
+            display = editor_descriptor(editor).display_name
+            print(f"已尝试启动 {display}：{app}")
+        except RuntimeError as error:
+            print(f"提示：未能自动启动编辑器（{error}）")
 
 
 def choose_editor() -> str:
+    options = [
+        ("none", "基础模式（无需编辑器联动）"),
+        ("goland", "GoLand 模式（语义引用与定位）"),
+        ("idea", "IntelliJ IDEA 模式（语义引用与定位）"),
+        ("vscode", "Visual Studio Code 模式（语义引用与定位）"),
+    ]
     print("选择 Easy CR 代码编辑器能力：")
-    print("  1. 基础模式（无需编辑器联动）")
-    print("  2. GoLand 模式（支持代码引用与定位）")
+    for index, (_, label) in enumerate(options, start=1):
+        print(f"  {index}. {label}")
+    valid = {str(index): editor for index, (editor, _) in enumerate(options, start=1)}
     while True:
-        choice = input("请输入 1 或 2：").strip()
-        if choice == "1":
-            return "none"
-        if choice == "2":
-            return "goland"
+        choice = input(f"请输入 1 到 {len(options)}：").strip()
+        if choice in valid:
+            return valid[choice]
         print("请输入有效选项。")
 
 
-def installed_goland_plugin() -> Path | None:
+def installed_jetbrains_plugin(editor: str) -> Path | None:
+    descriptor = jetbrains_editor(editor)
+    preferred = newest_plugins_dir(descriptor, descriptor.default_app) / "easy-cr"
+    if preferred.is_dir():
+        return preferred
+    support_root = Path.home() / "Library" / "Application Support" / "JetBrains"
     candidates = sorted(
-        GOLAND_PLUGIN_ROOT.glob("GoLand*/plugins/easy-cr"),
+        support_root.glob(f"{descriptor.app_support_pattern}/plugins/easy-cr"),
         reverse=True,
     )
     return candidates[0] if candidates else None
@@ -346,14 +422,21 @@ def claude_installation_state(
     }
 
 
-def check_goland_health(
-    token_path: Path = TOKEN_PATH,
-    endpoint: str = GOLAND_ENDPOINT,
+def check_editor_health(
+    editor: str,
+    *,
+    token_path: Path | None = None,
+    config_dir: Path = CONFIG_DIR,
 ) -> tuple[bool, str | None]:
+    descriptor = editor_descriptor(editor)
+    display = descriptor.display_name
+    if descriptor.endpoint is None:
+        return False, f"{display} 不提供运行时接口"
+    resolved_token = token_path or token_path_for_editor(editor, config_dir)
     try:
-        token = read_token(token_path)
+        token = read_token(resolved_token, editor)
         request = urllib.request.Request(
-            f"{endpoint}/api/health",
+            f"{descriptor.endpoint}/api/health",
             data=b"{}",
             method="POST",
             headers={
@@ -363,19 +446,145 @@ def check_goland_health(
         )
         with urllib.request.urlopen(request, timeout=1.5) as response:
             payload = json.loads(response.read())
-        if payload.get("ready") is True:
-            return True, None
-        return False, "GoLand 扩展返回了无效状态"
+        if payload.get("ready") is not True:
+            return False, f"{display} 扩展返回了无效状态"
+        if payload.get("editor") != editor:
+            return False, (
+                f"运行中的扩展是 {payload.get('editor')!r}，"
+                f"与当前配置 {editor!r} 不一致"
+            )
+        protocol = payload.get("protocolVersion")
+        if protocol not in (PROTOCOL_VERSION, str(PROTOCOL_VERSION)):
+            return False, (
+                f"{display} 扩展协议版本不匹配："
+                f"期望 {PROTOCOL_VERSION}，实际 {protocol!r}"
+            )
+        return True, None
     except urllib.error.HTTPError as error:
         if error.code == 404:
-            return False, "GoLand 尚未加载新版 Easy CR 扩展，请重启 GoLand"
+            return False, f"{display} 尚未加载新版 Easy CR 扩展，请重启 {display}"
         if error.code in (401, 403):
-            return False, "GoLand 扩展 token 校验失败，请重新执行 easy-cr config editor goland"
-        return False, f"GoLand 扩展返回 HTTP {error.code}"
+            return False, (
+                f"{display} 扩展 token 校验失败，"
+                f"请重新执行 easy-cr config editor {editor}"
+            )
+        return False, f"{display} 扩展返回 HTTP {error.code}"
     except ConfigError as error:
         return False, str(error)
     except (OSError, urllib.error.URLError, json.JSONDecodeError) as error:
         return False, str(error)
+
+
+# Backward-compatible alias used by older tests and callers.
+def check_goland_health(
+    token_path: Path | None = None,
+    endpoint: str | None = None,
+) -> tuple[bool, str | None]:
+    del endpoint  # endpoint is fixed by the editor registry
+    return check_editor_health(
+        "goland",
+        token_path=token_path,
+        config_dir=(token_path.parent if token_path is not None else CONFIG_DIR),
+    )
+
+
+def editor_runtime_status(
+    editor: str,
+    *,
+    config_dir: Path,
+    token_path: Path | None = None,
+) -> dict[str, Any]:
+    descriptor = editor_descriptor(editor)
+    resolved_token = token_path or (
+        token_path_for_editor(editor, config_dir)
+        if descriptor.token_filename
+        else None
+    )
+    token_exists = bool(resolved_token and resolved_token.expanduser().is_file())
+    token_permission_ok = False
+    if token_exists and resolved_token is not None:
+        token_permission_ok = (
+            stat.S_IMODE(resolved_token.expanduser().stat().st_mode) == 0o600
+        )
+
+    if editor in JETBRAINS_EDITOR_IDS:
+        jb = jetbrains_editor(editor)
+        plugin_path = installed_jetbrains_plugin(editor)
+        runtime_ready, runtime_error = check_editor_health(
+            editor,
+            token_path=resolved_token,
+            config_dir=config_dir,
+        )
+        return {
+            "id": editor,
+            "displayName": descriptor.display_name,
+            "endpoint": descriptor.endpoint,
+            "appInstalled": jb.default_app.is_dir(),
+            "extensionInstalled": plugin_path is not None,
+            "extensionPath": str(plugin_path) if plugin_path else None,
+            "runtimeReady": runtime_ready,
+            "runtimeError": runtime_error,
+            "token": {
+                "exists": token_exists,
+                "permissionOk": token_permission_ok,
+                "path": str(resolved_token) if resolved_token else None,
+            },
+        }
+
+    if editor == "vscode":
+        code_command: Path | None
+        code_error: str | None = None
+        try:
+            code_command = resolve_code_command()
+        except RuntimeError as error:
+            code_command = None
+            code_error = str(error)
+        extension_installed = False
+        extension_path = None
+        if code_command is not None:
+            listed = run([str(code_command), "--list-extensions"], allow_failure=True)
+            if listed.returncode == 0 and "easy-cr" in listed.stdout.lower():
+                extension_installed = True
+                extension_path = "easy-cr"
+        runtime_ready, runtime_error = check_editor_health(
+            editor,
+            token_path=resolved_token,
+            config_dir=config_dir,
+        )
+        if code_error and not runtime_ready and runtime_error is None:
+            runtime_error = code_error
+        return {
+            "id": editor,
+            "displayName": descriptor.display_name,
+            "endpoint": descriptor.endpoint,
+            "appInstalled": VSCODE_APP.is_dir() or code_command is not None,
+            "cliPath": str(code_command) if code_command else None,
+            "extensionInstalled": extension_installed,
+            "extensionPath": extension_path,
+            "runtimeReady": runtime_ready,
+            "runtimeError": runtime_error,
+            "token": {
+                "exists": token_exists,
+                "permissionOk": token_permission_ok,
+                "path": str(resolved_token) if resolved_token else None,
+            },
+        }
+
+    return {
+        "id": editor,
+        "displayName": descriptor.display_name,
+        "endpoint": descriptor.endpoint,
+        "appInstalled": False,
+        "extensionInstalled": False,
+        "extensionPath": None,
+        "runtimeReady": False,
+        "runtimeError": f"{descriptor.display_name} 尚未实现安装诊断",
+        "token": {
+            "exists": token_exists,
+            "permissionOk": token_permission_ok,
+            "path": str(resolved_token) if resolved_token else None,
+        },
+    }
 
 
 def collect_status(
@@ -383,12 +592,14 @@ def collect_status(
     repo_root: Path = REPO_ROOT,
     home: Path = Path.home(),
     config_path: Path = CONFIG_PATH,
-    token_path: Path = TOKEN_PATH,
+    token_path: Path | None = None,
+    config_dir: Path | None = None,
     client_commands: dict[str, Path | None] | None = None,
 ) -> dict[str, Any]:
     commands = client_commands or detect_client_commands()
     cli_link = home / ".local" / "bin" / "easy-cr"
     expected_cli = repo_root / "bin" / "easy-cr"
+    resolved_config_dir = config_dir or config_path.expanduser().parent
     try:
         editor = read_editor(config_path)
         editor_valid = True
@@ -398,10 +609,38 @@ def collect_status(
         editor_valid = False
         editor_error = str(error)
 
-    runtime_ready = False
-    runtime_error = None
-    if editor == "goland":
-        runtime_ready, runtime_error = check_goland_health(token_path)
+    runtime: dict[str, Any] | None = None
+    # Preserve legacy goland block shape for compatibility.
+    goland_block: dict[str, Any] = {
+        "appInstalled": False,
+        "extensionInstalled": False,
+        "extensionPath": None,
+        "runtimeReady": False,
+        "runtimeError": None,
+    }
+    token_block = {"exists": False, "permissionOk": False}
+    if editor in ENHANCED_EDITORS:
+        runtime = editor_runtime_status(
+            editor,
+            config_dir=resolved_config_dir,
+            token_path=(
+                token_path
+                if token_path is not None and editor == "goland"
+                else None
+            ),
+        )
+        token_block = {
+            "exists": runtime["token"]["exists"],
+            "permissionOk": runtime["token"]["permissionOk"],
+        }
+        if editor == "goland":
+            goland_block = {
+                "appInstalled": runtime["appInstalled"],
+                "extensionInstalled": runtime["extensionInstalled"],
+                "extensionPath": runtime["extensionPath"],
+                "runtimeReady": runtime["runtimeReady"],
+                "runtimeError": runtime["runtimeError"],
+            }
 
     codex_marketplace = home / ".agents" / "plugins" / "marketplace.json"
     codex_source_matches = False
@@ -418,18 +657,11 @@ def collect_status(
         pass
 
     cli_target = cli_link.resolve(strict=False) if cli_link.is_symlink() else None
-    plugin_path = installed_goland_plugin()
     codex_installation = codex_installation_state(commands.get("codex"))
     claude_installation = claude_installation_state(
         commands.get("claude"),
         repo_root,
     )
-    token_exists = token_path.expanduser().is_file()
-    token_permission_ok = False
-    if token_exists:
-        token_permission_ok = (
-            stat.S_IMODE(token_path.expanduser().stat().st_mode) == 0o600
-        )
     return {
         "source": str(repo_root.resolve()),
         "cli": {
@@ -454,18 +686,11 @@ def collect_status(
             "configured": editor,
             "valid": editor_valid,
             "error": editor_error,
+            "protocolVersion": PROTOCOL_VERSION,
+            "runtime": runtime,
         },
-        "goland": {
-            "appInstalled": GOLAND_APP.is_dir(),
-            "extensionInstalled": plugin_path is not None,
-            "extensionPath": str(plugin_path) if plugin_path else None,
-            "runtimeReady": runtime_ready,
-            "runtimeError": runtime_error,
-        },
-        "token": {
-            "exists": token_exists,
-            "permissionOk": token_permission_ok,
-        },
+        "goland": goland_block,
+        "token": token_block,
     }
 
 
@@ -515,20 +740,28 @@ def build_doctor_checks(payload: dict[str, Any]) -> list[dict[str, str]]:
             clients["claude"]["installed"],
             clients["claude"].get("error") or "Easy CR 插件安装状态",
         )
-    if editor["configured"] == "goland":
-        goland = payload["goland"]
-        token = payload.get("token", {})
+
+    configured = editor["configured"]
+    if configured in ENHANCED_EDITORS:
+        runtime = editor.get("runtime") or {}
+        token = runtime.get("token") or payload.get("token", {})
+        display = runtime.get("displayName") or configured
         add(
             "token",
             token.get("exists", False) and token.get("permissionOk", False),
             "本机 token 存在且权限为 0600",
         )
-        add("goland-app", goland["appInstalled"], "GoLand 应用")
-        add("goland-extension", goland["extensionInstalled"], "Easy CR 扩展文件")
+        if configured in JETBRAINS_EDITOR_IDS or configured == "vscode":
+            add(f"{configured}-app", bool(runtime.get("appInstalled")), f"{display} 应用")
+            add(
+                f"{configured}-extension",
+                bool(runtime.get("extensionInstalled")),
+                "Easy CR 扩展文件",
+            )
         add(
-            "goland-runtime",
-            goland["runtimeReady"],
-            goland["runtimeError"] or "运行时接口可用",
+            f"{configured}-runtime",
+            bool(runtime.get("runtimeReady")),
+            runtime.get("runtimeError") or "运行时接口可用",
         )
     return checks
 
@@ -550,10 +783,12 @@ def print_status(payload: dict[str, Any]) -> None:
         print(f"{name.capitalize()}：{label}")
     editor = payload["editor"]["configured"] or "未配置"
     print(f"编辑器：{editor}")
-    if editor == "goland":
+    runtime = payload["editor"].get("runtime")
+    if runtime:
+        display = runtime.get("displayName") or editor
         print(
-            "GoLand 扩展："
-            + ("运行中" if payload["goland"]["runtimeReady"] else "尚未加载")
+            f"{display} 扩展："
+            + ("运行中" if runtime.get("runtimeReady") else "尚未加载")
         )
 
 
@@ -581,11 +816,28 @@ def handle_init(args: argparse.Namespace) -> int:
         print(f"已配置 {client}")
 
     editor = args.editor or choose_editor()
-    configure_editor(editor)
-    if editor == "goland":
-        print("GoLand 扩展已安装，请手动重启 GoLand 后使用语义引用。")
-    else:
+    configure_editor(editor, project_path=Path.cwd(), launch=True)
+    if editor == "none":
         print("Easy CR 已使用基础模式。")
+    else:
+        display = editor_descriptor(editor).display_name
+        print(
+            f"{display} 扩展已安装。"
+            f"若窗口已在运行，请 Reload/重启一次使扩展生效。"
+        )
+    return 0
+
+
+def handle_open(args: argparse.Namespace) -> int:
+    editor = read_editor()
+    if editor is None or editor == "none":
+        raise RuntimeError("当前未配置增强编辑器，请先执行 easy-cr config editor <editor>")
+    project = (args.project or Path.cwd()).expanduser().resolve()
+    app = launch_editor(editor, project)
+    display = editor_descriptor(editor).display_name
+    print(f"已启动 {display}：{app}")
+    print(f"项目：{project}")
+    print("若扩展刚安装，请等待加载完成后使用语义引用。")
     return 0
 
 
@@ -595,12 +847,22 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "init":
             return handle_init(args)
         if args.command == "config":
-            configure_editor(args.editor)
-            if args.editor == "goland":
-                print("已启用 GoLand 模式，请手动重启 GoLand 使扩展生效。")
-            else:
+            configure_editor(
+                args.editor,
+                project_path=(args.project or Path.cwd()),
+                launch=not args.no_launch and args.editor != "none",
+            )
+            if args.editor == "none":
                 print("已切换为基础模式。")
+            else:
+                display = editor_descriptor(args.editor).display_name
+                print(
+                    f"已启用 {display} 模式。"
+                    f"若扩展未生效，请在 {display} 中 Reload Window 或重启一次。"
+                )
             return 0
+        if args.command == "open":
+            return handle_open(args)
         payload = collect_status()
         if args.command == "status":
             if args.json:
@@ -608,6 +870,19 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print_status(payload)
             return 0
+        if (
+            args.command == "doctor"
+            and getattr(args, "launch", False)
+            and payload["editor"].get("configured") in ENHANCED_EDITORS
+            and not (payload["editor"].get("runtime") or {}).get("runtimeReady")
+        ):
+            editor = payload["editor"]["configured"]
+            try:
+                app = launch_editor(editor, Path.cwd())
+                print(f"runtime 未就绪，已尝试启动 {editor_descriptor(editor).display_name}：{app}")
+            except RuntimeError as error:
+                print(f"runtime 未就绪，自动启动失败：{error}")
+            payload = collect_status()
         checks = build_doctor_checks(payload)
         result = {
             "ok": not any(item["status"] == "fail" for item in checks),

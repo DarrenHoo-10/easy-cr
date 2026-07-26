@@ -15,6 +15,11 @@ PLUGIN_DIR = Path(__file__).resolve().parents[3]
 SKILL_DIR = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = SKILL_DIR / "scripts"
 TEMPLATE_PATH = SKILL_DIR / "assets" / "review-template.html"
+JETBRAINS_PLUGIN = SKILL_DIR / "assets" / "jetbrains-plugin"
+HTTP_SERVICE = (
+    JETBRAINS_PLUGIN / "src" / "com" / "bytedance" / "easycr" / "EasyCrHttpService.java"
+)
+PLUGIN_XML = JETBRAINS_PLUGIN / "resources" / "META-INF" / "plugin.xml"
 
 
 def load_module(name: str, path: Path):
@@ -31,6 +36,14 @@ easy_cr_config = load_module("easy_cr_config", SCRIPTS_DIR / "easy_cr_config.py"
 build_review = load_module("easy_cr_build_review", SCRIPTS_DIR / "build_review.py")
 configure = load_module("easy_cr_configure", SCRIPTS_DIR / "configure.py")
 easy_cr_cli = load_module("easy_cr_cli", SCRIPTS_DIR / "easy_cr_cli.py")
+setup_jetbrains = load_module(
+    "setup_jetbrains_plugin",
+    SCRIPTS_DIR / "setup_jetbrains_plugin.py",
+)
+setup_vscode = load_module(
+    "setup_vscode_extension",
+    SCRIPTS_DIR / "setup_vscode_extension.py",
+)
 install_cli = load_module(
     "easy_cr_install_cli",
     PLUGIN_DIR / "scripts" / "install_cli.py",
@@ -63,7 +76,10 @@ class ConfigurationTest(unittest.TestCase):
     def test_missing_configuration_requests_one_time_choice(self):
         with tempfile.TemporaryDirectory() as temp:
             config = Path(temp) / "config.json"
-            semantic, warning = easy_cr_config.resolve_semantic(config, Path(temp) / "token")
+            semantic, warning = easy_cr_config.resolve_semantic(
+                config,
+                config_dir=Path(temp),
+            )
 
         self.assertEqual(semantic, {"mode": "none"})
         self.assertIn("尚未配置", warning)
@@ -72,14 +88,17 @@ class ConfigurationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             config = Path(temp) / "config.json"
             easy_cr_config.write_editor("none", config)
-            semantic, warning = easy_cr_config.resolve_semantic(config, Path(temp) / "token")
+            semantic, warning = easy_cr_config.resolve_semantic(
+                config,
+                config_dir=Path(temp),
+            )
 
             self.assertEqual(json.loads(config.read_text()), {"version": 1, "editor": "none"})
             self.assertEqual(semantic, {"mode": "none"})
             self.assertIsNone(warning)
             self.assertEqual(config.parent.stat().st_mode & 0o777, 0o700)
 
-    def test_goland_configuration_embeds_only_fixed_loopback_api(self):
+    def test_goland_configuration_embeds_editor_neutral_payload(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             config = root / "config.json"
@@ -88,81 +107,190 @@ class ConfigurationTest(unittest.TestCase):
             token.write_text("A" * 43)
             token.chmod(0o600)
 
-            semantic, warning = easy_cr_config.resolve_semantic(config, token)
+            semantic, warning = easy_cr_config.resolve_semantic(
+                config,
+                config_dir=root,
+            )
 
         self.assertEqual(warning, None)
-        self.assertEqual(semantic["mode"], "goland")
+        self.assertEqual(semantic["mode"], "editor")
+        self.assertEqual(semantic["editor"], "goland")
+        self.assertEqual(semantic["displayName"], "GoLand")
         self.assertEqual(semantic["endpoint"], "http://127.0.0.1:64343")
+        self.assertEqual(semantic["protocolVersion"], "2")
         self.assertEqual(semantic["token"], "A" * 43)
+
+    def test_idea_configuration_uses_separate_port_and_token(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            config = root / "config.json"
+            token = root / "idea-token"
+            easy_cr_config.write_editor("idea", config)
+            token.write_text("I" * 43)
+            token.chmod(0o600)
+
+            semantic, warning = easy_cr_config.resolve_semantic(
+                config,
+                config_dir=root,
+            )
+
+        self.assertIsNone(warning)
+        self.assertEqual(semantic["mode"], "editor")
+        self.assertEqual(semantic["editor"], "idea")
+        self.assertEqual(semantic["endpoint"], "http://127.0.0.1:64344")
+        self.assertEqual(semantic["token"], "I" * 43)
+        self.assertNotEqual(
+            easy_cr_config.EDITOR_DESCRIPTORS["goland"].endpoint,
+            easy_cr_config.EDITOR_DESCRIPTORS["idea"].endpoint,
+        )
+
+    def test_vscode_configuration_uses_port_64345(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            config = root / "config.json"
+            token = root / "vscode-token"
+            easy_cr_config.write_editor("vscode", config)
+            token.write_text("V" * 43)
+            token.chmod(0o600)
+
+            semantic, warning = easy_cr_config.resolve_semantic(
+                config,
+                config_dir=root,
+                repo=root,
+            )
+
+        self.assertIsNone(warning)
+        self.assertEqual(semantic["mode"], "editor")
+        self.assertEqual(semantic["editor"], "vscode")
+        self.assertEqual(semantic["endpoint"], "http://127.0.0.1:64345")
+        self.assertEqual(semantic["protocolVersion"], "2")
+        self.assertEqual(semantic["token"], "V" * 43)
+        self.assertEqual(semantic["appName"], "Visual Studio Code")
+        self.assertIn("vscode://file", semantic["launchUri"])
+        self.assertIn(str(root.resolve()), semantic["launchUri"])
+
+    def test_launch_uri_for_each_editor(self):
+        repo = Path("/tmp/demo-repo")
+        self.assertIn(
+            "vscode://file",
+            easy_cr_config.launch_uri_for("vscode", repo) or "",
+        )
+        self.assertIn(
+            "jetbrains://goland/",
+            easy_cr_config.launch_uri_for("goland", repo) or "",
+        )
+        self.assertIn(
+            "jetbrains://idea/",
+            easy_cr_config.launch_uri_for("idea", repo) or "",
+        )
+        self.assertIsNone(easy_cr_config.launch_uri_for("none", repo))
+
+    def test_launch_editor_uses_open_a(self):
+        with mock.patch.object(easy_cr_config.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+            with mock.patch.object(Path, "is_dir", return_value=True):
+                app = easy_cr_config.launch_editor("goland", "/tmp/project")
+        self.assertEqual(app.name, "GoLand.app")
+        command = run.call_args.args[0]
+        self.assertEqual(command[:3], ["open", "-a", "GoLand"])
+        self.assertTrue(command[3].endswith("/tmp/project") or command[3] == "/tmp/project")
 
     def test_invalid_or_incomplete_configuration_safely_degrades(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             config = root / "config.json"
             config.write_text('{"version":1,"editor":"goland"}')
-            semantic, warning = easy_cr_config.resolve_semantic(config, root / "missing-token")
+            semantic, warning = easy_cr_config.resolve_semantic(
+                config,
+                config_dir=root,
+            )
             self.assertEqual(semantic, {"mode": "none"})
             self.assertIn("GoLand", warning)
 
-            config.write_text('{"version":1,"editor":"vscode"}')
-            semantic, warning = easy_cr_config.resolve_semantic(config, root / "missing-token")
+            config.write_text('{"version":1,"editor":"idea"}')
+            semantic, warning = easy_cr_config.resolve_semantic(
+                config,
+                config_dir=root,
+            )
+            self.assertEqual(semantic, {"mode": "none"})
+            self.assertIn("IntelliJ IDEA", warning)
+
+            config.write_text('{"version":1,"editor":"notepad"}')
+            semantic, warning = easy_cr_config.resolve_semantic(
+                config,
+                config_dir=root,
+            )
             self.assertEqual(semantic, {"mode": "none"})
             self.assertIn("配置无效", warning)
 
     def test_editor_value_is_exhaustive(self):
         with tempfile.TemporaryDirectory() as temp:
             with self.assertRaises(ValueError):
-                easy_cr_config.write_editor("vscode", Path(temp) / "config.json")
+                easy_cr_config.write_editor("notepad", Path(temp) / "config.json")
 
     def test_status_never_exposes_local_token(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             config = root / "config.json"
-            token = root / "token"
+            token = root / "goland-token"
             easy_cr_config.write_editor("goland", config)
             token.write_text("S" * 43)
-            payload = configure.status_payload(config, token)
+            payload = configure.status_payload(config, config_dir=root)
 
         serialized = json.dumps(payload)
         self.assertNotIn("S" * 43, serialized)
         self.assertEqual(payload["configuredEditor"], "goland")
         self.assertTrue(payload["golandReady"])
+        self.assertTrue(payload["editorReady"])
+
+    def test_legacy_token_path_argument_still_works_for_goland(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            config = root / "config.json"
+            token = root / "custom-token"
+            easy_cr_config.write_editor("goland", config)
+            token.write_text("L" * 43)
+            semantic, warning = easy_cr_config.resolve_semantic(config, token)
+
+        self.assertIsNone(warning)
+        self.assertEqual(semantic["mode"], "editor")
+        self.assertEqual(semantic["token"], "L" * 43)
 
 
 class TemplateContractTest(unittest.TestCase):
-    def test_reference_ui_uses_command_click_and_no_bottom_toast(self):
+    def test_reference_ui_uses_command_click_and_position_protocol(self):
         template = TEMPLATE_PATH.read_text()
 
         self.assertIn('id="reference-popover"', template)
-        self.assertIn("semantic.mode !== 'goland' || !event.metaKey", template)
+        self.assertIn("semanticEnabled", template)
+        self.assertIn("!semanticEnabled || !event.metaKey", template)
+        self.assertIn("clickByteColumn", template)
         self.assertIn("/api/references", template)
         self.assertIn("/api/open", template)
-        self.assertIn("if (references.length <= 1)", template)
+        self.assertIn("if (payload.opened || references.length <= 1)", template)
+        self.assertIn("mode === 'editor' || semantic.mode === 'goland'", template)
+        self.assertIn("launchEditorApp", template)
+        self.assertIn("isConnectionError", template)
+        self.assertIn("正在等待 ${editorName} 扩展就绪", template)
         self.assertNotIn("semantic-toast", template)
         self.assertNotIn("/api/show-usages", template)
+        self.assertNotIn("code-identifier", template)
 
     def test_base_mode_does_not_bind_semantic_requests(self):
         template = TEMPLATE_PATH.read_text()
-        self.assertIn("semantic.mode !== 'goland'", template)
+        self.assertIn("if (!semanticEnabled || !event.metaKey) return;", template)
         self.assertIn("window.getSelection()?.toString()", template)
 
-    def test_goland_extension_uses_go_semantic_reference_search(self):
-        source = (
-            SKILL_DIR
-            / "assets"
-            / "goland-plugin"
-            / "src"
-            / "com"
-            / "bytedance"
-            / "easycr"
-            / "EasyCrHttpService.java"
-        ).read_text()
-        plugin_xml = (
-            SKILL_DIR / "assets" / "goland-plugin" / "resources" / "META-INF" / "plugin.xml"
-        ).read_text()
-        self.assertIn("GoReferencesSearch.search(", source)
-        self.assertNotIn("import com.intellij.psi.search.searches.ReferencesSearch;", source)
-        self.assertIn("<depends>org.jetbrains.plugins.go</depends>", plugin_xml)
+    def test_jetbrains_adapter_uses_platform_reference_search(self):
+        source = HTTP_SERVICE.read_text()
+        plugin_xml = PLUGIN_XML.read_text()
+        properties = (JETBRAINS_PLUGIN / "resources" / "easycr.properties").read_text()
+
+        self.assertIn("import com.intellij.psi.search.searches.ReferencesSearch;", source)
+        self.assertIn("ReferencesSearch.search(", source)
+        self.assertNotIn("GoReferencesSearch", source)
+        self.assertIn("<depends>com.intellij.modules.lang</depends>", plugin_xml)
+        self.assertNotIn("org.jetbrains.plugins.go", plugin_xml)
         self.assertIn("AppIcon.getInstance().requestFocus(frame)", source)
         self.assertIn("if (references.isEmpty())", source)
         self.assertIn("else if (references.size() == 1)", source)
@@ -170,12 +298,138 @@ class TemplateContractTest(unittest.TestCase):
         self.assertIn('server.createContext("/api/health"', source)
         self.assertIn('"X-Easy-CR-Token"', source)
         self.assertIn('result.addProperty("ready", true)', source)
+        self.assertIn('result.addProperty("editor", descriptor.editorId())', source)
+        self.assertIn('result.addProperty("protocolVersion", PROTOCOL_VERSION)', source)
+        self.assertIn("editor=", properties)
+        self.assertIn("port=", properties)
+
+    def test_revision_navigation_allows_tracked_worktree_changes(self):
+        source = HTTP_SERVICE.read_text()
+
+        self.assertIn(
+            'if ("revision".equals(reviewType)) {\n'
+            "            currentFingerprint = headCommit;",
+            source,
+        )
+        self.assertNotIn(
+            'runGit(root, "diff", "--quiet", "HEAD", "--")',
+            source,
+        )
+        self.assertNotIn("当前工作区存在 tracked 修改", source)
+        self.assertIn(
+            'currentFingerprint = sha256(headCommit + "\\n" + diff.stdout());',
+            source,
+        )
+
+    def test_setup_scripts_support_goland_and_idea(self):
+        setup = (SCRIPTS_DIR / "setup_jetbrains_plugin.py").read_text()
+        legacy = (SCRIPTS_DIR / "setup_goland_plugin.py").read_text()
+        self.assertIn('"goland"', setup)
+        self.assertIn('"idea"', setup)
+        self.assertEqual(setup_jetbrains.JETBRAINS_EDITORS["goland"].port, 64343)
+        self.assertEqual(setup_jetbrains.JETBRAINS_EDITORS["idea"].port, 64344)
+        self.assertEqual(
+            setup_jetbrains.JETBRAINS_EDITORS["goland"].token_file,
+            "goland-token",
+        )
+        self.assertEqual(
+            setup_jetbrains.JETBRAINS_EDITORS["idea"].token_file,
+            "idea-token",
+        )
+        self.assertIn("dataDirectoryName", setup)
+        self.assertIn("app_data_directory_name", setup)
+        self.assertIn("--editor", legacy)
+        self.assertIn("goland", legacy)
+
+    def test_jetbrains_plugins_dir_prefers_product_info(self):
+        editor = setup_jetbrains.jetbrains_editor("idea")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            app = root / "IntelliJ IDEA.app"
+            resources = app / "Contents" / "Resources"
+            resources.mkdir(parents=True)
+            (resources / "product-info.json").write_text(json.dumps({
+                "dataDirectoryName": "IntelliJIdea2025.3",
+            }))
+            support = root / "support"
+            # Misleading newer empty stub should lose to product-info.
+            (support / "IntelliJIdea2026.1" / "plugins").mkdir(parents=True)
+            (support / "IntelliJIdea2025.3" / "options").mkdir(parents=True)
+            (support / "IntelliJIdea2025.3" / "plugins").mkdir(parents=True)
+            with mock.patch.object(setup_jetbrains, "JETBRAINS_SUPPORT_ROOT", support):
+                chosen = setup_jetbrains.newest_plugins_dir(editor, app)
+            self.assertEqual(chosen, support / "IntelliJIdea2025.3" / "plugins")
+
+    def test_vscode_extension_scaffold_exists(self):
+        extension = SKILL_DIR / "assets" / "vscode-extension"
+        package = json.loads((extension / "package.json").read_text())
+        protocol = (extension / "src" / "protocol.ts").read_text()
+        extension_ts = (extension / "src" / "extension.ts").read_text()
+        server = (extension / "src" / "server.ts").read_text()
+        setup = (SCRIPTS_DIR / "setup_vscode_extension.py").read_text()
+
+        self.assertEqual(package["name"], "easy-cr")
+        self.assertEqual(package["main"], "./dist/extension.js")
+        self.assertIn("64345", protocol)
+        self.assertIn('EDITOR_ID = "vscode"', protocol)
+        self.assertIn("executeReferenceProvider", extension_ts)
+        self.assertIn("protocolVersion", server)
+        self.assertIn("--install-extension", setup)
+        self.assertIn("--force", setup)
+        self.assertIn("vscode-token", setup)
+        self.assertIn("resolve_code_command", setup)
+        self.assertIn("ensure_user_code_shim", setup)
+
+    def test_vscode_setup_discovers_app_bundle_cli(self):
+        app_code = Path(
+            "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+        )
+        with mock.patch.object(setup_vscode.shutil, "which", return_value=None):
+            with mock.patch.object(
+                setup_vscode,
+                "is_usable_code_command",
+                side_effect=lambda command: Path(command) == app_code,
+            ):
+                resolved = setup_vscode.resolve_code_command()
+        self.assertEqual(resolved, app_code.resolve())
+
+    def test_vscode_setup_creates_user_path_shim(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fake_code = root / "Visual Studio Code.app" / "Contents" / "Resources" / "app" / "bin" / "code"
+            fake_code.parent.mkdir(parents=True)
+            fake_code.write_text("#!/bin/sh\n")
+            fake_code.chmod(0o755)
+            user_bin = root / ".local" / "bin"
+            with mock.patch.object(setup_vscode, "USER_BIN", user_bin):
+                with mock.patch.object(setup_vscode.shutil, "which", return_value=None):
+                    shim = setup_vscode.ensure_user_code_shim(fake_code)
+            self.assertIsNotNone(shim)
+            assert shim is not None
+            self.assertTrue(shim.is_symlink())
+            self.assertEqual(shim.resolve(), fake_code.resolve())
+            # Existing unrelated file is left alone.
+            shim.unlink()
+            shim.write_text("keep")
+            with mock.patch.object(setup_vscode, "USER_BIN", user_bin):
+                with mock.patch.object(setup_vscode.shutil, "which", return_value=None):
+                    again = setup_vscode.ensure_user_code_shim(fake_code)
+            self.assertIsNone(again)
+            self.assertEqual(shim.read_text(), "keep")
 
 
 class CliTest(unittest.TestCase):
     def test_non_interactive_init_requires_editor(self):
         with self.assertRaises(SystemExit):
             easy_cr_cli.parse_args(["init", "--non-interactive"])
+
+    def test_cli_accepts_idea_and_vscode_editors(self):
+        args = easy_cr_cli.parse_args(["config", "editor", "idea"])
+        self.assertEqual(args.editor, "idea")
+        args = easy_cr_cli.parse_args(["init", "--editor", "idea", "--non-interactive"])
+        self.assertEqual(args.editor, "idea")
+        args = easy_cr_cli.parse_args(["config", "editor", "vscode"])
+        self.assertEqual(args.editor, "vscode")
 
     def test_client_detection_uses_codex_app_fallback(self):
         app_codex = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
@@ -222,24 +476,27 @@ class CliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             config = root / "config.json"
-            token = root / "token"
+            token = root / "goland-token"
             easy_cr_config.write_editor("goland", config)
             token.write_text("T" * 43)
+            token.chmod(0o600)
             with mock.patch.object(
                 easy_cr_cli,
-                "check_goland_health",
+                "check_editor_health",
                 return_value=(True, None),
             ):
                 payload = easy_cr_cli.collect_status(
                     repo_root=PLUGIN_DIR,
                     home=root,
                     config_path=config,
-                    token_path=token,
+                    config_dir=root,
                     client_commands={"codex": None, "claude": None},
                 )
 
         self.assertNotIn("T" * 43, json.dumps(payload))
         self.assertTrue(payload["goland"]["runtimeReady"])
+        self.assertEqual(payload["editor"]["configured"], "goland")
+        self.assertTrue(payload["editor"]["runtime"]["runtimeReady"])
 
     def test_doctor_fails_when_goland_runtime_is_not_ready(self):
         payload = {
@@ -248,16 +505,94 @@ class CliTest(unittest.TestCase):
                 "codex": {"available": False},
                 "claude": {"available": False},
             },
-            "editor": {"configured": "goland", "valid": True},
+            "editor": {
+                "configured": "goland",
+                "valid": True,
+                "runtime": {
+                    "displayName": "GoLand",
+                    "appInstalled": True,
+                    "extensionInstalled": True,
+                    "runtimeReady": False,
+                    "runtimeError": "connection refused",
+                    "token": {"exists": True, "permissionOk": True},
+                },
+            },
             "goland": {
                 "appInstalled": True,
                 "extensionInstalled": True,
                 "runtimeReady": False,
                 "runtimeError": "connection refused",
             },
+            "token": {"exists": True, "permissionOk": True},
         }
         checks = easy_cr_cli.build_doctor_checks(payload)
         self.assertTrue(any(item["status"] == "fail" for item in checks))
+        self.assertTrue(any(item["name"] == "goland-runtime" for item in checks))
+
+    def test_doctor_checks_idea_runtime(self):
+        payload = {
+            "cli": {"installed": True, "sourceMatches": True},
+            "clients": {
+                "codex": {"available": False},
+                "claude": {"available": False},
+            },
+            "editor": {
+                "configured": "idea",
+                "valid": True,
+                "runtime": {
+                    "displayName": "IntelliJ IDEA",
+                    "appInstalled": True,
+                    "extensionInstalled": True,
+                    "runtimeReady": True,
+                    "runtimeError": None,
+                    "token": {"exists": True, "permissionOk": True},
+                },
+            },
+            "goland": {
+                "appInstalled": False,
+                "extensionInstalled": False,
+                "runtimeReady": False,
+                "runtimeError": None,
+            },
+            "token": {"exists": True, "permissionOk": True},
+        }
+        checks = easy_cr_cli.build_doctor_checks(payload)
+        self.assertTrue(any(item["name"] == "idea-runtime" for item in checks))
+        self.assertFalse(any(item["status"] == "fail" for item in checks))
+
+    def test_health_rejects_mismatched_editor(self):
+        with tempfile.TemporaryDirectory() as temp:
+            token = Path(temp) / "goland-token"
+            token.write_text("H" * 43)
+            token.chmod(0o600)
+
+            class FakeResponse:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+                def read(self):
+                    return json.dumps({
+                        "ready": True,
+                        "plugin": "easy-cr",
+                        "editor": "idea",
+                        "protocolVersion": 2,
+                    }).encode()
+
+            with mock.patch.object(
+                easy_cr_cli.urllib.request,
+                "urlopen",
+                return_value=FakeResponse(),
+            ):
+                ok, error = easy_cr_cli.check_editor_health(
+                    "goland",
+                    token_path=token,
+                    config_dir=Path(temp),
+                )
+        self.assertFalse(ok)
+        self.assertIn("不一致", error or "")
 
 
 class CliInstallerTest(unittest.TestCase):
@@ -371,27 +706,28 @@ class BuildReviewTest(unittest.TestCase):
         }, ensure_ascii=False))
         return repo, manifest
 
-    def build(self, repo: Path, manifest: Path, output: Path, config: Path, token: Path):
-        build_review.main([
+    def build(self, repo: Path, manifest: Path, output: Path, config: Path, token: Path | None = None):
+        args = [
             "--repo", str(repo),
             "--base", "HEAD^",
             "--head", "HEAD",
             "--manifest", str(manifest),
             "--output", str(output),
             "--config-file", str(config),
-            "--token-file", str(token),
-        ])
+        ]
+        if token is not None:
+            args.extend(["--token-file", str(token)])
+        build_review.main(args)
 
-    def test_base_and_goland_modes_share_business_timeline(self):
+    def test_base_and_editor_modes_share_business_timeline(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             repo, manifest = self.make_repo(root)
             config = root / "config.json"
-            token = root / "token"
 
             easy_cr_config.write_editor("none", config)
             base_html = root / "base.html"
-            self.build(repo, manifest, base_html, config, token)
+            self.build(repo, manifest, base_html, config)
             base = base_html.read_text()
             self.assertIn("调用结果计算", base)
             self.assertLess(base.index("调用结果计算"), base.index("验证调用结果"))
@@ -399,15 +735,28 @@ class BuildReviewTest(unittest.TestCase):
             self.assertNotIn("127.0.0.1:64343", base)
 
             easy_cr_config.write_editor("goland", config)
+            token = root / "goland-token"
             token.write_text("B" * 43)
             token.chmod(0o600)
             enhanced_html = root / "enhanced.html"
-            self.build(repo, manifest, enhanced_html, config, token)
+            self.build(repo, manifest, enhanced_html, config)
             enhanced = enhanced_html.read_text()
-            self.assertIn('"mode": "goland"', enhanced)
+            self.assertIn('"mode": "editor"', enhanced)
+            self.assertIn('"editor": "goland"', enhanced)
             self.assertIn("http://127.0.0.1:64343", enhanced)
-            self.assertIn('class="code-identifier"', enhanced)
+            self.assertIn('"protocolVersion": "2"', enhanced)
+            self.assertNotIn('class="code-identifier"', enhanced)
             self.assertNotIn("@@REPORT_JSON@@", enhanced)
+
+            easy_cr_config.write_editor("idea", config)
+            idea_token = root / "idea-token"
+            idea_token.write_text("C" * 43)
+            idea_token.chmod(0o600)
+            idea_html = root / "idea.html"
+            self.build(repo, manifest, idea_html, config)
+            idea = idea_html.read_text()
+            self.assertIn('"editor": "idea"', idea)
+            self.assertIn("http://127.0.0.1:64344", idea)
 
     def test_untracked_files_are_not_in_revision_review(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -417,7 +766,7 @@ class BuildReviewTest(unittest.TestCase):
             config = root / "config.json"
             easy_cr_config.write_editor("none", config)
             output = root / "review.html"
-            self.build(repo, manifest, output, config, root / "token")
+            self.build(repo, manifest, output, config)
             self.assertNotIn("untracked.go", output.read_text())
 
 

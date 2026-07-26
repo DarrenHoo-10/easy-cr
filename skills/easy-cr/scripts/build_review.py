@@ -15,22 +15,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from easy_cr_config import CONFIG_PATH, TOKEN_PATH, resolve_semantic
+from easy_cr_config import CONFIG_PATH, resolve_semantic
 
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 TEMPLATE_PATH = SKILL_DIR / "assets" / "review-template.html"
-GO_KEYWORDS = frozenset({
-    "break", "default", "func", "interface", "select", "case", "defer", "go",
-    "map", "struct", "chan", "else", "goto", "package", "switch", "const",
-    "fallthrough", "if", "range", "type", "continue", "for", "import", "return",
-    "var",
-})
 HUNK_PATTERN = re.compile(
     r"^@@ -(?P<old>\d+)(?:,(?P<old_count>\d+))? "
     r"\+(?P<new>\d+)(?:,(?P<new_count>\d+))? @@"
 )
-IDENTIFIER_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 @dataclass
@@ -138,79 +131,10 @@ def inline_markup(value: str) -> str:
     return re.sub(r"`([^`\n]+)`", r"<code>\1</code>", escaped)
 
 
-def highlight_go_line(text: str, block_comment: bool) -> tuple[str, bool]:
-    prefix = text[:1] if text[:1] in {"+", " ", "-"} else ""
-    source = text[1:] if prefix else text
-    output = [html.escape(prefix)]
-    cursor = 0
-    length = len(source)
-
-    while cursor < length:
-        if block_comment:
-            end = source.find("*/", cursor)
-            if end < 0:
-                output.append(html.escape(source[cursor:]))
-                return "".join(output), True
-            output.append(html.escape(source[cursor:end + 2]))
-            cursor = end + 2
-            block_comment = False
-            continue
-        if source.startswith("//", cursor):
-            output.append(html.escape(source[cursor:]))
-            break
-        if source.startswith("/*", cursor):
-            end = source.find("*/", cursor + 2)
-            if end < 0:
-                output.append(html.escape(source[cursor:]))
-                return "".join(output), True
-            output.append(html.escape(source[cursor:end + 2]))
-            cursor = end + 2
-            continue
-        char = source[cursor]
-        if char in {'"', "'", "`"}:
-            quote = char
-            end = cursor + 1
-            while end < length:
-                if quote != "`" and source[end] == "\\":
-                    end += 2
-                    continue
-                if source[end] == quote:
-                    end += 1
-                    break
-                end += 1
-            output.append(html.escape(source[cursor:end]))
-            cursor = end
-            continue
-        identifier = IDENTIFIER_PATTERN.match(source, cursor)
-        if identifier:
-            symbol = identifier.group(0)
-            if symbol in GO_KEYWORDS:
-                output.append(symbol)
-            else:
-                byte_column = len(source[:cursor].encode("utf-8")) + 1
-                output.append(
-                    '<span class="code-identifier" '
-                    f'data-symbol="{html.escape(symbol, quote=True)}" '
-                    f'data-column="{byte_column}">{html.escape(symbol)}</span>'
-                )
-            cursor = identifier.end()
-            continue
-        output.append(html.escape(char))
-        cursor += 1
-    return "".join(output), block_comment
-
-
 def render_file_card(item: DiffFile, index: int) -> str:
     rendered_lines: list[str] = []
-    block_comment = False
-    is_go = item.path.endswith(".go")
     for line in item.lines:
-        if line.kind == "hunk":
-            block_comment = False
-        if is_go and line.kind in {"add", "ctx"}:
-            body, block_comment = highlight_go_line(line.text, block_comment)
-        else:
-            body = html.escape(line.text)
+        body = html.escape(line.text)
         old_value = "" if line.old_line is None else str(line.old_line)
         new_value = "" if line.new_line is None else str(line.new_line)
         rendered_lines.append(
@@ -354,7 +278,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--context", type=int, default=10)
     parser.add_argument("--config-file", type=Path, default=CONFIG_PATH)
-    parser.add_argument("--token-file", type=Path, default=TOKEN_PATH)
+    parser.add_argument(
+        "--token-file",
+        type=Path,
+        default=None,
+        help="已废弃：token 按所选编辑器自动解析，仅为兼容保留",
+    )
     return parser.parse_args(argv)
 
 
@@ -373,7 +302,11 @@ def main(argv: list[str] | None = None) -> int:
     if not files:
         raise RuntimeError("review range has no changed files")
     manifest = normalize_manifest(manifest, [item.path for item in files])
-    semantic, warning = resolve_semantic(args.config_file, args.token_file)
+    semantic, warning = resolve_semantic(
+        args.config_file,
+        token_path=args.token_file,
+        repo=repo,
+    )
     if warning:
         print(f"easy-cr: {warning}; 已生成基础模式 HTML", file=sys.stderr)
 

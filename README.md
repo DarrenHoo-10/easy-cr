@@ -1,172 +1,227 @@
 # Easy CR
 
-Easy CR 是一套同时支持 Codex 与 Claude Code 的本地代码评审插件。它将 Git Diff 按业务时序组织成可交互 HTML，支持评论协作，并可选接入 GoLand 的语义引用与代码跳转能力。
+把 Git Diff 变成一份沿业务流程阅读的交互式 Code Review。
 
-## 核心能力
+Easy CR 是面向 Codex 和 Claude Code 的本地代码评审插件。它不再让评审者从文件目录猜测业务逻辑，而是按照“请求进入 → 条件判断 → 状态变化 → 返回结果”的顺序组织改动，并生成一份可直接在浏览器中打开的单文件 HTML。
 
-- 按业务触发、判断、状态变化和结果从上到下组织代码改动。
-- 每个业务阶段先展示说明，再展示对应 Diff。
-- 支持文件筛选、搜索、折叠和黑夜/白天主题。
-- 支持选中文字或整行评论，以及评论编辑、删除、回复、汇总和复制。
-- `Enter` 保存评论，`Command+Enter` 或 `Shift+Enter` 换行。
-- 未配置编辑器时生成完全离线的基础 HTML，不启动额外服务。
-- 配置 GoLand 后，使用 `Command+点击` 查询 Go 标识符的语义引用：
-  - 无引用：GoLand 定位当前代码。
-  - 一个引用：GoLand 直接定位唯一调用位置。
-  - 多个引用：HTML 展示引用列表，选择后再跳转 GoLand。
+![Easy CR 评审页面](https://raw.githubusercontent.com/DarrenHoo-10/easy-cr/main/docs/images/easy-cr-review.jpg)
 
-## 目录结构
+## 你可以用它做什么
 
-```text
-easy-cr/
-├── bin/easy-cr
-├── scripts/install_cli.py
-├── .codex-plugin/plugin.json
-├── .claude-plugin/
-│   ├── plugin.json
-│   └── marketplace.json
-├── skills/easy-cr/
-│   ├── SKILL.md
-│   ├── agents/openai.yaml
-│   ├── assets/
-│   │   ├── review-template.html
-│   │   └── goland-plugin/
-│   ├── references/
-│   ├── scripts/
-│   └── tests/
-└── README.md
-```
+- 按业务发生顺序阅读代码改动，而不是在文件之间来回跳转。
+- 评审当前工作区、最新提交、指定提交或功能分支。
+- 搜索、筛选和折叠 Diff，并切换浅色或深色主题。
+- 对代码行或选中文字添加评论、回复和汇总。
+- 将生成的 HTML 直接发给同事，不依赖在线评审服务。
+- 可选连接 GoLand、IntelliJ IDEA 或 VS Code，查询符号引用并跳转到本地代码。
 
 ## 环境要求
 
+- Node.js 18+
 - Python 3.10+
 - Git
 - Codex 或 Claude Code
-- GoLand 增强模式仅支持 macOS 本机 GoLand
 
-## 编辑器配置
+基础评审模式只需要浏览器。编辑器联动目前支持 macOS 本机安装的：
 
-Codex 与 Claude Code 共用用户级配置：
+- GoLand
+- IntelliJ IDEA
+- Visual Studio Code Desktop
 
-```text
-~/.config/easy-cr/config.json
-~/.config/easy-cr/goland-token
-```
+## 快速开始
 
-## 通过 npm 安装
-
-包名为 `easy-cr`，安装后会提供同名全局命令：
+### 1. 安装
 
 ```bash
 npm install --global easy-cr
+```
+
+确认命令可用：
+
+```bash
 easy-cr --version
-easy-cr init
 ```
 
-也可以显式指定客户端与基础模式，适合自动化环境：
-
-```bash
-easy-cr init --editor none --client codex --client claude --non-interactive
-```
-
-npm 仅用于分发，Easy CR 运行时仍需要 Python 3.10+ 和 Git。GoLand 增强模式仅支持 macOS 本机 GoLand。
-
-## 从源码安装
-
-在仓库根目录安装全局命令：
-
-```bash
-python3 scripts/install_cli.py
-```
-
-首次初始化会检测本机已安装的 Codex 和 Claude Code，并引导选择基础模式或 GoLand 模式：
+### 2. 初始化
 
 ```bash
 easy-cr init
 ```
 
-常用配置与诊断命令：
+初始化程序会检测本机的 Codex 和 Claude Code，并引导你选择：
+
+- `none`：基础模式，只生成可交互 HTML。
+- `goland`：启用 GoLand 引用查询和代码跳转。
+- `idea`：启用 IntelliJ IDEA 引用查询和代码跳转。
+- `vscode`：启用 VS Code 引用查询和代码跳转。
+
+完成后，根据终端提示重启对应客户端或编辑器。Codex 用户需要新建一个任务，让最新版 Easy CR skill 生效。
+
+也可以使用非交互方式初始化：
 
 ```bash
-easy-cr status
-easy-cr status --json
+easy-cr init \
+  --editor idea \
+  --client codex \
+  --client claude \
+  --non-interactive
+```
+
+### 3. 发起一次评审
+
+在目标 Git 仓库中打开 Codex 或 Claude Code，然后直接描述评审范围。
+
+评审当前工作区：
+
+```text
+使用 Easy CR 评审当前工作区改动
+```
+
+评审最新提交：
+
+```text
+使用 Easy CR 评审最新一次提交
+```
+
+评审功能分支：
+
+```text
+使用 Easy CR 评审 feature/order 相对 main 的改动
+```
+
+Easy CR 会分析 Diff、整理业务时序、生成 HTML 并在浏览器中打开。你不需要手工准备评审模板或 manifest。
+
+## 如何使用评审页面
+
+### 阅读改动
+
+- 页面顶部展示改动目标、影响范围和完整业务流程。
+- 左侧可以按文件名搜索，并筛选生产代码或测试代码。
+- 主区域按照业务阶段从上到下展示说明和对应 Diff。
+- 点击“全部折叠”可以快速浏览阶段摘要。
+
+### 添加评论
+
+- 点击行号：评论整行。
+- 拖选代码文字：评论选中的内容。
+- `Enter`：保存评论。
+- `Command+Enter` 或 `Shift+Enter`：在评论中换行。
+- 点击顶部“评论 N”：查看、回复、编辑、删除或复制全部评论。
+
+评论保存在当前浏览器中。需要分享时，可以使用“复制评论”整理评审结论。
+
+### 跳转到本地编辑器
+
+配置增强编辑器后，在 Diff 中对可识别的代码标识符执行 `Command+点击`：
+
+- 没有引用：编辑器打开当前代码位置。
+- 只有一个引用：直接跳转到调用位置。
+- 存在多个引用：页面展示引用列表，选择后跳转。
+
+如果评审生成后代码发生变化，Easy CR 会拒绝使用旧页面跳转。重新生成评审即可继续。
+
+## 编辑器配置
+
+随时切换编辑器：
+
+```bash
 easy-cr config editor none
 easy-cr config editor goland
+easy-cr config editor idea
+easy-cr config editor vscode
+```
+
+配置编辑器并打开指定项目：
+
+```bash
+easy-cr config editor idea --project /path/to/repository
+```
+
+启动当前配置的编辑器并打开当前项目：
+
+```bash
+easy-cr open
+```
+
+检查插件安装和运行状态：
+
+```bash
 easy-cr doctor
-easy-cr doctor --json
-easy-cr --version
 ```
 
-- `none`：使用基础 HTML，不启用语义引用。
-- `goland`：安装受限的 GoLand 扩展，获得代码引用与定位能力；安装后需要手动重启 GoLand。
-
-GoLand 扩展只监听 `127.0.0.1:64343`，使用本机随机 token，并校验项目、Git 评审版本和仓库内文件路径。`doctor` 通过受 token 保护的 `/api/health` 检查扩展是否已经加载，输出中不会包含 token。
-
-## 安装
-
-### Codex
-
-推荐统一初始化：
+如果编辑器尚未启动：
 
 ```bash
-easy-cr init --editor none --client codex --non-interactive
+easy-cr doctor --launch
 ```
 
-该命令会原子更新 `~/.agents/plugins/marketplace.json` 中的 Easy CR 条目，并保留其他插件配置。
-更新后请新建 Codex 任务加载最新版 skill。
+## 常用命令
 
-### Claude Code
-
-```bash
-easy-cr init --editor none --client claude --non-interactive
-```
-
-更新后重启 Claude Code。
+| 命令 | 用途 |
+| --- | --- |
+| `easy-cr init` | 初始化客户端与编辑器 |
+| `easy-cr status` | 查看当前安装和配置 |
+| `easy-cr status --json` | 输出便于诊断的 JSON 状态 |
+| `easy-cr config editor <editor>` | 切换基础模式或增强编辑器 |
+| `easy-cr open` | 使用当前编辑器打开项目 |
+| `easy-cr doctor` | 检查客户端、插件和编辑器联动 |
+| `easy-cr doctor --launch` | 启动编辑器后再次检查 |
+| `easy-cr --version` | 查看当前版本 |
 
 ## 常见问题
 
-- `easy-cr: command not found`：确认 `~/.local/bin` 在 `PATH`，再执行 `python3 scripts/install_cli.py`。
-- `doctor` 提示 GoLand runtime 未就绪：先确认 GoLand 已打开目标项目；刚安装扩展时需要手动重启 GoLand。
-- Codex 或 Claude 未检测到：显式传入 `--client` 会返回失败；不传时只配置检测到的客户端。
-- 全局命令目标已存在：安装器不会覆盖普通文件或无关软链，请先人工确认该文件用途。
+### 新建文件没有出现在工作区评审中
 
-## 生成评审 HTML
-
-先按 [manifest-schema.md](skills/easy-cr/references/manifest-schema.md) 准备业务时序 manifest，然后执行：
+Easy CR 默认不包含 Git 未跟踪文件。如果希望新文件进入 Diff，但暂时不提交内容，可以执行：
 
 ```bash
-python3 skills/easy-cr/scripts/build_review.py \
-  --repo /path/to/repository \
-  --base HEAD^ \
-  --head HEAD \
-  --manifest /path/to/review-manifest.json \
-  --output /path/to/review.html \
-  --context 10
+git add -N path/to/new-file
 ```
 
-生成结果是单文件 HTML，可直接在浏览器打开。评审版本与当前工作区不一致时，GoLand 语义跳转会拒绝执行，避免定位到错误代码。
+然后重新生成评审。
 
-## 验证
+### 编辑器联动显示未就绪
+
+先运行：
+
+```bash
+easy-cr doctor --launch
+```
+
+如果刚安装编辑器插件，请 Reload 或重启编辑器，并确保目标仓库已经在编辑器中打开。
+
+### `easy-cr: command not found`
+
+重新安装并检查 npm 全局可执行目录是否在 `PATH` 中：
+
+```bash
+npm install --global easy-cr
+npm prefix --global
+```
+
+### 评审页提示版本不一致
+
+页面对应的提交或工作区已经发生变化。让 Codex 或 Claude Code 重新生成一次 Easy CR 评审即可。
+
+### 可以同时使用多个编辑器吗
+
+插件可以分别安装到 GoLand、IntelliJ IDEA 和 VS Code，但一份评审页只连接当前配置的编辑器。使用 `easy-cr config editor <editor>` 切换后重新生成评审。
+
+## 从源码安装
+
+克隆仓库后执行：
+
+```bash
+python3 scripts/install_cli.py
+easy-cr init
+```
+
+运行测试：
 
 ```bash
 npm test
-npm pack --dry-run
-python3 skills/easy-cr/scripts/setup_goland_plugin.py \
-  --build-only /tmp/easy-cr.jar
 ```
 
-插件结构校验：
+## 反馈
 
-```bash
-python3 ~/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py .
-python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/easy-cr
-claude plugin validate . --strict
-```
-
-## 开发约束
-
-- 基础模式和 GoLand 增强模式必须共用同一份模板与生成器。
-- 不使用文本搜索模拟语义引用。
-- 不启动 `gopls`、Python helper 或其他常驻服务。
-- 不在 HTML 中接受前端传入的任意本地 endpoint。
-- 不恢复或维护旧的 `easy-cr-pro` 分叉。
+如果遇到问题或有功能建议，请在 [GitHub Issues](https://github.com/DarrenHoo-10/easy-cr/issues) 提交反馈。
