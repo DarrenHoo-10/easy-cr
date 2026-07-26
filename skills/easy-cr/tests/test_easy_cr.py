@@ -431,6 +431,97 @@ class CliTest(unittest.TestCase):
         args = easy_cr_cli.parse_args(["config", "editor", "vscode"])
         self.assertEqual(args.editor, "vscode")
 
+    def test_config_editor_reuses_existing_vscode_setup(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            config = root / "config.json"
+            token = root / "vscode-token"
+            token.write_text("V" * 43)
+            token.chmod(0o600)
+            listed = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="bytedance.easy-cr\n",
+                stderr="",
+            )
+            with mock.patch.object(
+                easy_cr_cli,
+                "resolve_code_command",
+                return_value=Path("/Applications/Visual Studio Code.app/code"),
+            ):
+                with mock.patch.object(easy_cr_cli, "run", return_value=listed) as run:
+                    with mock.patch.object(easy_cr_cli, "launch_editor") as launch:
+                        installed = easy_cr_cli.configure_editor(
+                            "vscode",
+                            config_path=config,
+                            config_dir=root,
+                        )
+                        configured = json.loads(config.read_text())["editor"]
+
+        self.assertFalse(installed)
+        self.assertEqual(configured, "vscode")
+        run.assert_called_once_with(
+            [
+                "/Applications/Visual Studio Code.app/code",
+                "--list-extensions",
+            ],
+            allow_failure=True,
+        )
+        launch.assert_not_called()
+
+    def test_config_editor_reuses_existing_idea_setup(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            config = root / "config.json"
+            token = root / "idea-token"
+            token.write_text("I" * 43)
+            token.chmod(0o600)
+            with mock.patch.object(
+                easy_cr_cli,
+                "installed_jetbrains_plugin",
+                return_value=root / "plugins" / "easy-cr",
+            ):
+                with mock.patch.object(easy_cr_cli, "run") as run:
+                    with mock.patch.object(easy_cr_cli, "launch_editor") as launch:
+                        installed = easy_cr_cli.configure_editor(
+                            "idea",
+                            config_path=config,
+                            config_dir=root,
+                        )
+                        configured = json.loads(config.read_text())["editor"]
+
+        self.assertFalse(installed)
+        self.assertEqual(configured, "idea")
+        run.assert_not_called()
+        launch.assert_not_called()
+
+    def test_config_editor_installs_incomplete_setup_without_launching(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            config = root / "config.json"
+            completed = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="已安装 Easy CR Visual Studio Code 扩展\n",
+                stderr="",
+            )
+            with mock.patch.object(easy_cr_cli, "run", return_value=completed) as run:
+                with mock.patch.object(easy_cr_cli, "launch_editor") as launch:
+                    installed = easy_cr_cli.configure_editor(
+                        "vscode",
+                        config_path=config,
+                        config_dir=root,
+                    )
+                    configured = json.loads(config.read_text())["editor"]
+
+        self.assertTrue(installed)
+        self.assertEqual(configured, "vscode")
+        self.assertIn(
+            str(easy_cr_cli.SETUP_VSCODE_SCRIPT),
+            run.call_args.args[0],
+        )
+        launch.assert_not_called()
+
     def test_client_detection_uses_codex_app_fallback(self):
         app_codex = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
         with mock.patch.object(easy_cr_cli.shutil, "which", return_value=None):

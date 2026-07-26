@@ -111,15 +111,17 @@ CLI health checks require matching `editor` and `protocolVersion`.
 
 ## Installation notes
 
-- `easy-cr config editor goland|idea` installs the JetBrains adapter via `setup_jetbrains_plugin.py`.
-- `easy-cr config editor vscode` builds a VSIX via `setup_vscode_extension.py` and installs it with the discovered VS Code CLI (`code --install-extension --force`).
+- `easy-cr config editor <editor>` only changes the active editor when that editor's adapter and token already exist.
+- When the adapter or token is missing, `easy-cr config editor goland|idea` installs the JetBrains adapter via `setup_jetbrains_plugin.py`.
+- When the adapter or token is missing, `easy-cr config editor vscode` builds a VSIX via `setup_vscode_extension.py` and installs it with the discovered VS Code CLI (`code --install-extension --force`).
+- `easy-cr config editor <editor>` and `easy-cr init` never launch or restart an editor. Use `easy-cr open` or `easy-cr doctor --launch` when launching is desired.
 - VS Code CLI discovery order: `PATH` 中的 `code` → macOS `Visual Studio Code.app` 内置 CLI → 常见绝对路径。
 - 若 `PATH` 中没有 `code`，安装器会尽量在 `~/.local/bin/code` 创建指向应用内 CLI 的软链（不覆盖已有文件）；随后新开终端即可直接使用 `code`。
 - The legacy `setup_goland_plugin.py` entrypoint forwards to `--editor goland`.
 - Tokens are created with permission `0600` under `~/.config/easy-cr/`.
 - VS Code adapter supports local Desktop workspaces only; Remote SSH/WSL/Dev Containers/Codespaces are unsupported in v1.
 - Enhanced editors must run inside the target IDE process. If the IDE is not running:
-  - CLI: `easy-cr open` / `easy-cr config editor <editor>` / `easy-cr doctor --launch` will try `open -a <App> <project>`.
+  - CLI: `easy-cr open` / `easy-cr doctor --launch` will try `open -a <App> <project>`.
   - HTML: Command+click connection failures open `launchUri` (for example `vscode://file...`) and retry health/API for a short window while the extension loads.
 - Launching the app is best-effort. Semantic references still require the Easy CR extension to finish loading in an opened local workspace.
 - `init` automatically configures installed Codex and Claude Code clients. In automation, use `--non-interactive` together with an explicit `--editor`; repeat `--client` to constrain the clients being configured.
