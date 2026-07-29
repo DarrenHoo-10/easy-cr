@@ -61,6 +61,10 @@ easy-cr doctor [--json]
 
 Endpoints and ports come only from this built-in registry. HTML never accepts a caller-supplied local endpoint.
 
+The single Easy CR comment helper listens on
+`http://127.0.0.1:64346`. This port is reserved separately from the three
+editor endpoints so IntelliJ IDEA and the helper can run at the same time.
+
 ## Protocol v2 semantic payload
 
 When an enhanced editor is configured and its token is present, generated HTML embeds:

@@ -1985,7 +1985,7 @@ class HelperServiceTest(unittest.TestCase):
         self.assertIn("批次 batch-1", submit.call_args.args[1])
         popen.assert_not_called()
 
-    def test_launch_agent_uses_one_fixed_label_and_port(self):
+    def test_launch_agent_uses_one_fixed_label_and_dedicated_port(self):
         payload = easy_cr_helper.launch_agent_payload(
             Path("/usr/bin/python3"),
             Path("/plugin/easy_cr_helper.py"),
@@ -1996,7 +1996,13 @@ class HelperServiceTest(unittest.TestCase):
             payload["Label"],
             "com.bytedance.easy-cr.helper",
         )
-        self.assertIn("64344", payload["ProgramArguments"])
+        self.assertIn("64346", payload["ProgramArguments"])
+        editor_endpoints = {
+            descriptor.endpoint
+            for descriptor in easy_cr_config.EDITOR_DESCRIPTORS.values()
+            if descriptor.endpoint is not None
+        }
+        self.assertNotIn(easy_cr_helper.HELPER_ENDPOINT, editor_endpoints)
         self.assertTrue(payload["KeepAlive"])
 
 

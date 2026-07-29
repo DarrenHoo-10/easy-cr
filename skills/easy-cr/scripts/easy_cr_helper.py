@@ -34,7 +34,7 @@ from review_comments import extract_comments, replace_comments_block
 
 
 HELPER_HOST = "127.0.0.1"
-HELPER_PORT = 64344
+HELPER_PORT = 64346
 HELPER_ENDPOINT = f"http://{HELPER_HOST}:{HELPER_PORT}"
 HELPER_LABEL = "com.bytedance.easy-cr.helper"
 CONFIG_DIR = Path.home() / ".config" / "easy-cr"

@@ -66,7 +66,7 @@ For a legacy v1 manifest, also pass `--repo`, `--base`, and `--head`.
    - Business stages read smoothly from top to bottom.
    - Do not stage or commit review artifacts unless requested.
 8. Open the HTML and return a clickable absolute path.
-9. The report uses the single Easy CR helper at `127.0.0.1:64344` to persist comments into the current HTML. The top-right `发送评论给 AI` button sends only `pending` comments, marks them `processing`, and resumes the originating Codex/Claude session with the batch id.
+9. The report uses the single Easy CR helper at `127.0.0.1:64346` to persist comments into the current HTML. The top-right `发送评论给 AI` button sends only `pending` comments, marks them `processing`, and resumes the originating Codex/Claude session with the batch id.
 10. When an Agent receives an Easy CR comment batch, run:
 
 ```bash
