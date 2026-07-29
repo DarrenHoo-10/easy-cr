@@ -8,8 +8,8 @@
   "plugins": [
     {
       "name": "easy-cr",
-      "description": "Business-first interactive HTML code reviews with optional GoLand navigation.",
-      "version": "1.0.4",
+      "description": "Guided multi-repository HTML code reviews with portable comments.",
+      "version": "1.4.0",
       "source": "./",
       "category": "productivity"
     }

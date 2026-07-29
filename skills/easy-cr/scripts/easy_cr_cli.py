@@ -16,6 +16,10 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 from easy_cr_config import (
     CONFIG_PATH,
     GOLAND_ENDPOINT,
@@ -25,10 +29,22 @@ from easy_cr_config import (
     read_token,
     write_editor,
 )
+from easy_cr_helper import (
+    HELPER_ENDPOINT,
+    LAUNCH_AGENT_PATH,
+    MASTER_TOKEN_PATH,
+    helper_health,
+    install_helper_service,
+)
+from review_comments import (
+    comments_markdown,
+    extract_comments,
+    mark_batch_resolved,
+    replace_comments_block,
+)
 
 
-VERSION = "1.1.0"
-SCRIPT_DIR = Path(__file__).resolve().parent
+VERSION = "1.4.0"
 SKILL_DIR = SCRIPT_DIR.parent
 REPO_ROOT = SKILL_DIR.parents[1]
 SETUP_GOLAND_SCRIPT = SCRIPT_DIR / "setup_goland_plugin.py"
@@ -69,6 +85,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     doctor_parser = subparsers.add_parser("doctor", help="诊断本地安装")
     doctor_parser.add_argument("--json", action="store_true")
 
+    comments_parser = subparsers.add_parser(
+        "comments",
+        help="读取评审 HTML 中的人类评论",
+    )
+    comments_parser.add_argument("report", type=Path)
+    comments_parser.add_argument("--json", action="store_true")
+    comments_parser.add_argument(
+        "--resolve-batch",
+        help="将指定 AI 处理批次中的评论标记为已解决",
+    )
+
     args = parser.parse_args(argv)
     if (
         args.command == "init"
@@ -106,6 +133,23 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
         with os.fdopen(descriptor, "w") as stream:
             json.dump(payload, stream, ensure_ascii=False, indent=2)
             stream.write("\n")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def atomic_write_text(path: Path, content: str) -> None:
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        dir=path.parent,
+    )
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.chmod(stat.S_IMODE(path.stat().st_mode))
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
@@ -430,6 +474,19 @@ def collect_status(
         token_permission_ok = (
             stat.S_IMODE(token_path.expanduser().stat().st_mode) == 0o600
         )
+    helper_token_exists = MASTER_TOKEN_PATH.is_file()
+    helper_token_permission_ok = False
+    helper_runtime_ready = False
+    if helper_token_exists:
+        helper_token_permission_ok = (
+            stat.S_IMODE(MASTER_TOKEN_PATH.stat().st_mode) == 0o600
+        )
+        try:
+            helper_runtime_ready = helper_health(
+                MASTER_TOKEN_PATH.read_text().strip(),
+            )
+        except OSError:
+            helper_runtime_ready = False
     return {
         "source": str(repo_root.resolve()),
         "cli": {
@@ -465,6 +522,13 @@ def collect_status(
         "token": {
             "exists": token_exists,
             "permissionOk": token_permission_ok,
+        },
+        "helper": {
+            "endpoint": HELPER_ENDPOINT,
+            "launchAgentInstalled": LAUNCH_AGENT_PATH.is_file(),
+            "tokenExists": helper_token_exists,
+            "tokenPermissionOk": helper_token_permission_ok,
+            "runtimeReady": helper_runtime_ready,
         },
     }
 
@@ -530,6 +594,23 @@ def build_doctor_checks(payload: dict[str, Any]) -> list[dict[str, str]]:
             goland["runtimeReady"],
             goland["runtimeError"] or "运行时接口可用",
         )
+    helper = payload.get("helper", {})
+    add(
+        "helper-launch-agent",
+        helper.get("launchAgentInstalled", False),
+        "单实例常驻服务已注册",
+    )
+    add(
+        "helper-token",
+        helper.get("tokenExists", False)
+        and helper.get("tokenPermissionOk", False),
+        "helper token 存在且权限为 0600",
+    )
+    add(
+        "helper-runtime",
+        helper.get("runtimeReady", False),
+        "127.0.0.1:64344 可用",
+    )
     return checks
 
 
@@ -555,6 +636,11 @@ def print_status(payload: dict[str, Any]) -> None:
             "GoLand 扩展："
             + ("运行中" if payload["goland"]["runtimeReady"] else "尚未加载")
         )
+    helper = payload.get("helper", {})
+    print(
+        "评论服务："
+        + ("运行中" if helper.get("runtimeReady") else "尚未运行")
+    )
 
 
 def handle_init(args: argparse.Namespace) -> int:
@@ -571,6 +657,8 @@ def handle_init(args: argparse.Namespace) -> int:
         print("未检测到 Codex 或 Claude Code，已仅配置 Easy CR 本地能力。")
 
     install_cli()
+    install_helper_service()
+    print("Easy CR 评论服务已启动。")
     for client in clients:
         command = commands[client]
         assert command is not None
@@ -600,6 +688,20 @@ def main(argv: list[str] | None = None) -> int:
                 print("已启用 GoLand 模式，请手动重启 GoLand 使扩展生效。")
             else:
                 print("已切换为基础模式。")
+            return 0
+        if args.command == "comments":
+            source = args.report.read_text()
+            payload = extract_comments(source)
+            if args.resolve_batch:
+                payload = mark_batch_resolved(payload, args.resolve_batch)
+                atomic_write_text(
+                    args.report,
+                    replace_comments_block(source, payload),
+                )
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                print(comments_markdown(payload, args.report.stem))
             return 0
         payload = collect_status()
         if args.command == "status":

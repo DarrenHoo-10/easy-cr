@@ -1,50 +1,112 @@
 # Easy CR manifest
 
-Create one UTF-8 JSON manifest:
+优先使用 schema v2。它用“技术方案章节 → 业务步骤 → 代码范围”组织评审，并允许一个章节连续讲解多个仓库。
 
 ```json
 {
-  "subject": "可选：覆盖提交标题",
-  "scope": "当前分支相对目标基线的代码改动；不包含未跟踪文件",
+  "schema_version": 2,
+  "subject": "任务回显与自动提交宣推方案",
+  "scope": "任务中心、宣推服务和补偿任务的一条完整业务链路",
   "overview_title": "改动概括",
-  "summary": "先说明业务目标，再说明最终变化。标识符可使用 `backticks`。",
-  "boundary": "说明生效范围、兼容边界和明确不受影响的流程。",
-  "flow": [
-    {"title": "接收请求", "detail": "读取业务输入"},
-    {"title": "执行判断", "detail": "校验条件并决定分支"},
-    {"title": "完成处理", "detail": "写入结果或返回响应"}
-  ],
-  "review_points": [
-    "生效范围是否准确",
-    "状态或数据变化是否完整",
-    "失败路径是否清晰"
-  ],
-  "groups": [
+  "summary": "创建或修改任务后同步订单配置，并自动提交未提交的宣推方案。",
+  "boundary": "已确认方案的订单不再同步任务备注和预览图。",
+  "repositories": [
     {
-      "id": "receive-request",
-      "title": "接收业务请求",
-      "summary": "说明本阶段输入、目标和输出。",
-      "points": ["入口", "参数", "边界"],
-      "files": ["handler.go", "service/example.go"]
+      "id": "mission-center",
+      "label": "music_mission_center",
+      "root": "/absolute/path/to/music_mission_center",
+      "base": "origin/master",
+      "head": "HEAD",
+      "context": 10
     },
     {
-      "id": "verify-behavior",
-      "title": "验证业务结果",
-      "summary": "说明测试如何覆盖主线与异常分支。",
-      "points": ["主流程", "异常流程"],
-      "files": ["service/example_test.go"]
+      "id": "promote",
+      "label": "music_promote",
+      "root": "/absolute/path/to/music_promote",
+      "base": "origin/master",
+      "head": "HEAD"
+    }
+  ],
+  "flow": [
+    {"title": "保存任务", "detail": "写入任务与订单配置"},
+    {"title": "判断是否提交", "detail": "仅处理尚未提交方案的订单"},
+    {"title": "完成提交", "detail": "提交成功或展示失败处理"}
+  ],
+  "review_points": [
+    "订单确认后是否停止同步",
+    "多任务配置是否按 mission_id 隔离",
+    "自动提交失败分支是否完整"
+  ],
+  "chapters": [
+    {
+      "id": "auto-submit",
+      "title": "任务回显与自动提交宣推方案",
+      "goal": "从任务保存自然讲到宣推方案提交结果。",
+      "summary": "同一章节可以引用多个仓库的代码。",
+      "points": ["数据映射", "提交条件", "失败处理"],
+      "steps": [
+        {
+          "id": "save-task",
+          "title": "保存任务配置",
+          "goal": "持久化任务备注和预览图。",
+          "decision": "订单方案未确认时才同步订单。",
+          "result": "订单保存 mission_id 到任务配置的映射。",
+          "explanation": "这一段解释在生成 HTML 时写入，浏览器不调用 AI。",
+          "code": [
+            {
+              "repo_id": "mission-center",
+              "path": "service/mission/save.go",
+              "ranges": [{"start": 120, "end": 155}],
+              "display_mode": "guided",
+              "annotation": "任务与订单更新在同一事务内完成。"
+            }
+          ]
+        },
+        {
+          "id": "submit-proposal",
+          "title": "自动提交宣推方案",
+          "explanation": "先查询订单是否已提交；只有未提交时才发起自动提交。",
+          "code": [
+            {
+              "repo_id": "promote",
+              "path": "service/commission/submit.go",
+              "display_mode": "compact-context"
+            }
+          ]
+        }
+      ]
     }
   ]
 }
 ```
 
-## Rules
+## 字段规则
 
-- `flow` 必须包含 3–6 个按发生顺序排列的业务节点。
-- `groups` 顺序就是页面从上到下的业务时序。
-- 每个阶段先解释业务输入、判断和结果，再展示对应 Diff。
-- 测试、IDL、依赖改动应归入其服务的业务阶段。
-- 同一文件最多属于一个阶段。
-- group 标题使用业务动作，不使用“API 层”“Service 层”等纯技术分层。
-- 不得引用本次 Diff 之外的文件。
-- 不写入原始 HTML。
+- `repositories[].id`、`chapters[].id`、`steps[].id` 必须稳定且唯一。
+- `root` 必须是绝对 Git 仓库路径；每个仓库独立指定 `base` 和 `head`。
+- `head` 可以使用 revision，也可以使用 `WORKTREE`；后者只包含已跟踪的工作区改动。
+- `code[].repo_id + path` 必须指向对应仓库在本次 Diff 中发生变化的文件。
+- `ranges` 可省略；填写时必须覆盖该文件应归入本步骤的全部业务 Diff。
+- `display_mode` 可选：
+  - `guided`：突出指定范围，适合主业务逻辑。
+  - `compact-context`：展示必要上下文，适合一般实现。
+  - `diff-only`：只展示改动行，适合依赖、生成物和 import-only 改动。
+- 未显式指定展示模式时，依赖清单、锁文件、生成物和 import-only 改动自动使用 `diff-only`，其他文件使用 `compact-context`。
+- `goal`、`decision`、`result`、`explanation` 和 `annotation` 都在生成报告时预先写入；HTML 内没有运行时 AI 请求。
+- 除测试文件、依赖文件和纯 import-only 改动外，每一行生产代码 Diff 都必须被业务章节引用；文件未归类或 `ranges` 遗漏业务改动时，生成器会直接报错。
+
+## 内容组织规则
+
+- 章节对应技术方案中的业务功能，不按目录或 API/Service/DAO 技术层拆分。
+- 步骤按实际发生顺序排列，从业务触发、判断和状态变化讲到最终结果。
+- 同一章节可以连续引用多个仓库；不要为每个仓库单独生成一份报告。
+- IDL、依赖改动应放进其支撑的业务步骤。
+- 测试文件无需写入章节代码引用；生成器会将其保留在“完整 Diff”的测试分组中，不在章节讲解区展示。
+- 依赖文件和纯 import-only 改动保留在“完整 Diff”的“测试与依赖”分组，不创建兜底业务章节。
+- 不使用“补充其他改动”。无法归入现有章节的生产代码应先调整技术方案结构，再生成报告。
+- `flow` 建议保留 3–6 个节点；省略时会从章节自动生成。
+- 报告输出路径应位于任一受评仓库的 `.codex-artifacts` 目录。生成器会向单实例 Easy CR helper 注册该报告，评论只写回这一个 HTML。
+
+## v1 兼容
+
+旧版单仓库 manifest 仍可继续使用 `groups`，并通过命令行传入 `--repo --base --head`。生成器会把它归一化成单仓库 v2 页面；新报告不再建议使用 v1。

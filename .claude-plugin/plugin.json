@@ -1,7 +1,7 @@
 {
   "name": "easy-cr",
-  "version": "1.0.4",
-  "description": "Generate business-sequenced HTML code reviews with comments and optional GoLand semantic navigation.",
+  "version": "1.4.0",
+  "description": "Generate guided, multi-repository HTML code reviews with portable human comments and optional GoLand navigation.",
   "author": {
     "name": "Bytedance"
   }
