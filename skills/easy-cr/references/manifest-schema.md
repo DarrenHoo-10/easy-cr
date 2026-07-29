@@ -13,16 +13,16 @@
   "repositories": [
     {
       "id": "mission-center",
-      "label": "music_mission_center",
-      "root": "/absolute/path/to/music_mission_center",
+      "label": "service_a",
+      "root": "/absolute/path/to/service_a",
       "base": "origin/master",
       "head": "HEAD",
       "context": 10
     },
     {
       "id": "promote",
-      "label": "music_promote",
-      "root": "/absolute/path/to/music_promote",
+      "label": "service_b",
+      "root": "/absolute/path/to/service_b",
       "base": "origin/master",
       "head": "HEAD"
     }
