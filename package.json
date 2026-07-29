@@ -1,6 +1,6 @@
 {
   "name": "easy-cr",
-  "version": "1.1.2",
+  "version": "1.4.0",
   "description": "Generate business-sequenced HTML code reviews with comments and optional GoLand, IntelliJ IDEA, or VS Code semantic navigation.",
   "keywords": [
     "codex",

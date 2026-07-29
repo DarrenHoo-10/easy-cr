@@ -1,15 +1,15 @@
 {
   "name": "easy-cr",
-  "version": "1.1.2",
-  "description": "Generate business-sequenced HTML code reviews with comments and optional GoLand, IntelliJ IDEA, or VS Code semantic navigation.",
+  "version": "1.4.0+codex.20260729085935",
+  "description": "Generate guided, multi-repository HTML code reviews with portable human comments and optional GoLand, IntelliJ IDEA, or VS Code navigation.",
   "author": {
     "name": "Bytedance"
   },
   "skills": "./skills/",
   "interface": {
     "displayName": "Easy CR",
-    "shortDescription": "Business-first interactive HTML code reviews.",
-    "longDescription": "Generate self-contained code review pages ordered by business lifecycle, with inline comments, replies, themes, filtering, and optional GoLand semantic references and navigation.",
+    "shortDescription": "Guided multi-repository HTML code reviews.",
+    "longDescription": "Generate self-contained review pages organized by technical-plan chapters and business steps, with portable human comments and optional GoLand navigation.",
     "developerName": "Bytedance",
     "category": "Productivity",
     "capabilities": [

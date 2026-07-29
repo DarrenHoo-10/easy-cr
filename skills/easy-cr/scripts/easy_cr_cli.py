@@ -43,9 +43,22 @@ from setup_vscode_extension import (
     VSCODE_APP,
     resolve_code_command,
 )
+from easy_cr_helper import (
+    HELPER_ENDPOINT,
+    LAUNCH_AGENT_PATH,
+    MASTER_TOKEN_PATH,
+    helper_health,
+    install_helper_service,
+)
+from review_comments import (
+    comments_markdown,
+    extract_comments,
+    mark_batch_resolved,
+    replace_comments_block,
+)
 
 
-VERSION = "1.1.2"
+VERSION = "1.4.0"
 SKILL_DIR = SCRIPT_DIR.parent
 REPO_ROOT = SKILL_DIR.parents[1]
 SETUP_JETBRAINS_SCRIPT = SCRIPT_DIR / "setup_jetbrains_plugin.py"
@@ -112,6 +125,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="若增强编辑器 runtime 未就绪，尝试启动编辑器",
     )
 
+    comments_parser = subparsers.add_parser(
+        "comments",
+        help="读取评审 HTML 中的人类评论",
+    )
+    comments_parser.add_argument("report", type=Path)
+    comments_parser.add_argument("--json", action="store_true")
+    comments_parser.add_argument(
+        "--resolve-batch",
+        help="将指定 AI 处理批次中的评论标记为已解决",
+    )
+
     args = parser.parse_args(argv)
     if (
         args.command == "init"
@@ -149,6 +173,23 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
         with os.fdopen(descriptor, "w") as stream:
             json.dump(payload, stream, ensure_ascii=False, indent=2)
             stream.write("\n")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def atomic_write_text(path: Path, content: str) -> None:
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        dir=path.parent,
+    )
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.chmod(stat.S_IMODE(path.stat().st_mode))
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
@@ -691,6 +732,19 @@ def collect_status(
         commands.get("claude"),
         repo_root,
     )
+    helper_token_exists = MASTER_TOKEN_PATH.is_file()
+    helper_token_permission_ok = False
+    helper_runtime_ready = False
+    if helper_token_exists:
+        helper_token_permission_ok = (
+            stat.S_IMODE(MASTER_TOKEN_PATH.stat().st_mode) == 0o600
+        )
+        try:
+            helper_runtime_ready = helper_health(
+                MASTER_TOKEN_PATH.read_text().strip(),
+            )
+        except OSError:
+            helper_runtime_ready = False
     return {
         "source": str(repo_root.resolve()),
         "cli": {
@@ -720,6 +774,13 @@ def collect_status(
         },
         "goland": goland_block,
         "token": token_block,
+        "helper": {
+            "endpoint": HELPER_ENDPOINT,
+            "launchAgentInstalled": LAUNCH_AGENT_PATH.is_file(),
+            "tokenExists": helper_token_exists,
+            "tokenPermissionOk": helper_token_permission_ok,
+            "runtimeReady": helper_runtime_ready,
+        },
     }
 
 
@@ -792,6 +853,23 @@ def build_doctor_checks(payload: dict[str, Any]) -> list[dict[str, str]]:
             bool(runtime.get("runtimeReady")),
             runtime.get("runtimeError") or "运行时接口可用",
         )
+    helper = payload.get("helper", {})
+    add(
+        "helper-launch-agent",
+        helper.get("launchAgentInstalled", False),
+        "单实例常驻服务已注册",
+    )
+    add(
+        "helper-token",
+        helper.get("tokenExists", False)
+        and helper.get("tokenPermissionOk", False),
+        "helper token 存在且权限为 0600",
+    )
+    add(
+        "helper-runtime",
+        helper.get("runtimeReady", False),
+        "127.0.0.1:64344 可用",
+    )
     return checks
 
 
@@ -819,6 +897,11 @@ def print_status(payload: dict[str, Any]) -> None:
             f"{display} 扩展："
             + ("运行中" if runtime.get("runtimeReady") else "尚未加载")
         )
+    helper = payload.get("helper", {})
+    print(
+        "评论服务："
+        + ("运行中" if helper.get("runtimeReady") else "尚未运行")
+    )
 
 
 def handle_init(args: argparse.Namespace) -> int:
@@ -835,6 +918,8 @@ def handle_init(args: argparse.Namespace) -> int:
         print("未检测到 Codex 或 Claude Code，已仅配置 Easy CR 本地能力。")
 
     install_cli()
+    install_helper_service()
+    print("Easy CR 评论服务已启动。")
     for client in clients:
         command = commands[client]
         assert command is not None
@@ -897,6 +982,20 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "open":
             return handle_open(args)
+        if args.command == "comments":
+            source = args.report.read_text()
+            payload = extract_comments(source)
+            if args.resolve_batch:
+                payload = mark_batch_resolved(payload, args.resolve_batch)
+                atomic_write_text(
+                    args.report,
+                    replace_comments_block(source, payload),
+                )
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                print(comments_markdown(payload, args.report.stem))
+            return 0
         payload = collect_status()
         if args.command == "status":
             if args.json:

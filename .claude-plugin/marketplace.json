@@ -8,8 +8,8 @@
   "plugins": [
     {
       "name": "easy-cr",
-      "description": "Generate business-sequenced HTML code reviews with comments and optional GoLand, IntelliJ IDEA, or VS Code semantic navigation.",
-      "version": "1.1.2",
+      "description": "Guided multi-repository HTML code reviews with portable comments and optional GoLand, IntelliJ IDEA, or VS Code navigation.",
+      "version": "1.4.0",
       "source": "./",
       "category": "productivity"
     }
