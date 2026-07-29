@@ -11,7 +11,9 @@ import os
 import plistlib
 import secrets
 import shutil
+import socket
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -47,6 +49,9 @@ LAUNCH_AGENT_PATH = (
 )
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
 CODEX_APP_COMMAND = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
+CODEX_IPC_SOCKET = Path.home() / ".codex" / "ipc" / "ipc.sock"
+CODEX_IPC_REQUEST_VERSION = 1
+CODEX_IPC_TIMEOUT_SECONDS = 10.0
 
 
 class ConflictError(ValueError):
@@ -303,15 +308,10 @@ def prepare_report_helper(
     }
 
 
-def agent_command(
+def agent_prompt(
     agent: dict[str, Any],
     report_path: Path,
-    *,
-    codex_command: Path | None = None,
-    claude_command: Path | None = None,
-) -> list[str]:
-    client = agent.get("client")
-    session_id = agent.get("sessionId")
+) -> str:
     report_subject = str(agent.get("reportSubject") or report_path.stem)
     batch_id = agent.get("reviewBatchId")
     comment_ids = agent.get("reviewCommentIds")
@@ -321,12 +321,23 @@ def agent_command(
         and isinstance(comment_ids, list)
         and comment_ids
     ):
-        prompt = (
+        return (
             f"我已完成 CR，请处理「{report_subject}」CR 报告中本次发送的 "
             f"{len(comment_ids)} 条评论（批次 {batch_id}）：{report_path}"
         )
-    else:
-        prompt = f"我已完成 CR，请处理「{report_subject}」CR 报告的评论：{report_path}"
+    return f"我已完成 CR，请处理「{report_subject}」CR 报告的评论：{report_path}"
+
+
+def agent_command(
+    agent: dict[str, Any],
+    report_path: Path,
+    *,
+    codex_command: Path | None = None,
+    claude_command: Path | None = None,
+) -> list[str]:
+    client = agent.get("client")
+    session_id = agent.get("sessionId")
+    prompt = agent_prompt(agent, report_path)
     if client == "codex":
         detected = shutil.which("codex")
         executable = codex_command or (
@@ -346,6 +357,116 @@ def agent_command(
             prompt,
         ]
     raise RuntimeError("报告未绑定可恢复的 Agent")
+
+
+def _write_ipc_frame(connection: socket.socket, payload: dict[str, Any]) -> None:
+    encoded = json.dumps(payload, ensure_ascii=False).encode()
+    connection.sendall(struct.pack("<I", len(encoded)) + encoded)
+
+
+def _read_ipc_exact(connection: socket.socket, size: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = size
+    while remaining:
+        chunk = connection.recv(remaining)
+        if not chunk:
+            raise RuntimeError("Codex Desktop IPC 连接已关闭")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _read_ipc_frame(connection: socket.socket) -> dict[str, Any]:
+    size = struct.unpack("<I", _read_ipc_exact(connection, 4))[0]
+    if size <= 0 or size > MAX_REQUEST_BYTES:
+        raise RuntimeError("Codex Desktop IPC 返回了无效消息")
+    payload = json.loads(_read_ipc_exact(connection, size))
+    if not isinstance(payload, dict):
+        raise RuntimeError("Codex Desktop IPC 返回格式无效")
+    return payload
+
+
+def _wait_ipc_response(
+    connection: socket.socket,
+    request_id: str,
+) -> dict[str, Any]:
+    while True:
+        payload = _read_ipc_frame(connection)
+        if payload.get("type") == "client-discovery-request":
+            _write_ipc_frame(
+                connection,
+                {
+                    "type": "client-discovery-response",
+                    "requestId": payload.get("requestId"),
+                    "response": {"canHandle": False},
+                },
+            )
+            continue
+        if payload.get("type") != "response" or payload.get("requestId") != request_id:
+            continue
+        if payload.get("resultType") != "success":
+            raise RuntimeError(
+                f"Codex Desktop 未接收当前会话消息：{payload.get('error') or 'unknown-error'}"
+            )
+        return payload
+
+
+def submit_codex_turn(
+    session_id: str,
+    prompt: str,
+    *,
+    socket_path: Path = CODEX_IPC_SOCKET,
+    timeout_seconds: float = CODEX_IPC_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    try:
+        conversation_id = str(uuid.UUID(str(session_id)))
+    except (ValueError, AttributeError, TypeError) as error:
+        raise ValueError("Codex sessionId 不是有效 UUID") from error
+    socket_path = socket_path.expanduser()
+    if not socket_path.is_socket():
+        raise RuntimeError("Codex Desktop IPC 不可用，请先打开绑定报告的 Codex 会话")
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(timeout_seconds)
+            connection.connect(str(socket_path))
+            initialize_id = str(uuid.uuid4())
+            _write_ipc_frame(
+                connection,
+                {
+                    "type": "request",
+                    "requestId": initialize_id,
+                    "method": "initialize",
+                    "params": {"clientType": "easy-cr"},
+                },
+            )
+            initialized = _wait_ipc_response(connection, initialize_id)
+            client_id = str(
+                (initialized.get("result") or {}).get("clientId") or ""
+            )
+            if not client_id:
+                raise RuntimeError("Codex Desktop IPC 初始化失败")
+            request_id = str(uuid.uuid4())
+            _write_ipc_frame(
+                connection,
+                {
+                    "type": "request",
+                    "requestId": request_id,
+                    "sourceClientId": client_id,
+                    "version": CODEX_IPC_REQUEST_VERSION,
+                    "method": "thread-follower-start-turn",
+                    "params": {
+                        "conversationId": conversation_id,
+                        "turnStartParams": {
+                            "input": [{"type": "text", "text": prompt}],
+                            "clientUserMessageId": str(uuid.uuid4()),
+                        },
+                    },
+                    "timeoutMs": int(timeout_seconds * 1000),
+                },
+            )
+            return _wait_ipc_response(connection, request_id)
+    except (OSError, socket.timeout) as error:
+        raise RuntimeError(f"Codex Desktop 当前会话提交失败：{error}") from error
 
 
 def codex_thread_url(session_id: str) -> str:
@@ -373,6 +494,12 @@ def _default_client_opener(agent: dict[str, Any]) -> bool:
 
 
 def _default_launcher(agent: dict[str, Any], report_path: Path) -> None:
+    if agent.get("client") == "codex":
+        submit_codex_turn(
+            str(agent.get("sessionId") or ""),
+            agent_prompt(agent, report_path),
+        )
+        return
     cwd = Path(str(agent.get("cwd") or report_path.parent)).resolve()
     arguments = agent_command(agent, report_path)
     if not Path(arguments[0]).is_file():
@@ -535,6 +662,20 @@ class HelperStore:
             _atomic_write(path, updated.encode(), mode=mode)
             return payload
 
+    def read_comments(
+        self,
+        report_id: str,
+        token: str,
+    ) -> dict[str, Any]:
+        with self.lock:
+            registry = self._load()
+            entry = self._entry(registry, report_id, token)
+            path = Path(entry["path"]).resolve()
+            payload = extract_comments(path.read_text())
+            if payload["reportId"] != report_id:
+                raise ValueError("报告内嵌 reportId 不匹配")
+            return payload
+
     def complete_review(
         self,
         report_id: str,
@@ -689,6 +830,11 @@ class HelperRequestHandler(BaseHTTPRequestHandler):
                     token,
                     int(payload.get("expectedRevision") or 0),
                     payload.get("comments"),
+                )
+            elif self.path == "/api/comments/read":
+                result = store.read_comments(
+                    str(payload.get("reportId") or ""),
+                    token,
                 )
             elif self.path == "/api/reviews/complete":
                 result = store.complete_review(

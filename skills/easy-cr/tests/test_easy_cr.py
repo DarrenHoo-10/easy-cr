@@ -4,9 +4,11 @@ import importlib.util
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -183,6 +185,7 @@ class TemplateContractTest(unittest.TestCase):
         self.assertIn('id="guided-review"', template)
         self.assertIn('id="full-diff-view"', template)
         self.assertIn("helperRequest('/api/comments/write'", template)
+        self.assertIn("helperRequest('/api/comments/read'", template)
         self.assertIn("helperRequest('/api/reviews/complete'", template)
         self.assertIn('id="complete-review"', template)
         self.assertNotIn("showOpenFilePicker", template)
@@ -195,6 +198,17 @@ class TemplateContractTest(unittest.TestCase):
         self.assertNotIn("评论已写入 HTML", template)
         self.assertIn("inline-comment-composer", template)
         self.assertIn("inlineAfter", template)
+        self.assertIn("values.forEach(comment => {", template)
+        self.assertNotIn("values.slice(0, 4).forEach(comment => {", template)
+        self.assertIn("main.className = 'mini-comment-main'", template)
+        self.assertIn(
+            "makeToolbarButton('编辑', () => openInlineEditor(item",
+            template,
+        )
+        self.assertIn(
+            "comments = comments.filter(value => value.id !== comment.id)",
+            template,
+        )
         self.assertNotIn("/api/ai", template)
         self.assertNotIn("fetchExplanation", template)
 
@@ -248,6 +262,8 @@ class TemplateContractTest(unittest.TestCase):
         self.assertIn("resolved:'已解决'", template)
         self.assertIn("completeReviewButton.classList.add('sent')", template)
         self.assertIn("completeReviewResetTimer = window.setTimeout", template)
+        self.assertIn("window.addEventListener('focus', refreshCommentState)", template)
+        self.assertIn("comments.some(comment => comment.status === 'processing')", template)
         self.assertIn("}, 1500)", template)
         self.assertNotIn("comment.resolved", template)
         self.assertNotIn("已打开原任务", template)
@@ -1139,6 +1155,38 @@ class HelperServiceTest(unittest.TestCase):
         self.assertEqual(embedded, payload)
         self.assertIn("请补充失败分支", rendered)
 
+    def test_read_comments_returns_latest_embedded_state(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            report = self.make_report(root)
+            store = easy_cr_helper.HelperStore(root / "config")
+            registration = store.register_report({
+                "reportId": "report-1",
+                "path": str(report),
+                "repositoryRoots": [str(root / "repo")],
+                "agent": None,
+            })
+            written = store.write_comments(
+                "report-1",
+                registration["reportToken"],
+                0,
+                [{
+                    "id": "c1",
+                    "scope": "document",
+                    "target": {},
+                    "body": "处理中",
+                    "status": "processing",
+                    "replies": [],
+                }],
+            )
+
+            payload = store.read_comments(
+                "report-1",
+                registration["reportToken"],
+            )
+
+        self.assertEqual(payload, written)
+
     def test_write_rejects_stale_revision_and_path_escape(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1393,6 +1441,90 @@ class HelperServiceTest(unittest.TestCase):
             ),
         )
         self.assertIn(str(report), claude[-1])
+
+    def test_codex_native_ipc_starts_turn_in_bound_desktop_thread(self):
+        session_id = "019f88f5-e5d7-7ff1-bac3-7c46ab1fd365"
+        received: list[dict] = []
+        with tempfile.TemporaryDirectory() as temp:
+            socket_path = Path(temp) / "ipc.sock"
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server.bind(str(socket_path))
+            server.listen(1)
+
+            def serve_once() -> None:
+                connection, _ = server.accept()
+                with connection:
+                    initialize = easy_cr_helper._read_ipc_frame(connection)
+                    received.append(initialize)
+                    easy_cr_helper._write_ipc_frame(
+                        connection,
+                        {
+                            "type": "response",
+                            "requestId": initialize["requestId"],
+                            "resultType": "success",
+                            "method": "initialize",
+                            "result": {"clientId": "easy-cr-client"},
+                        },
+                    )
+                    request = easy_cr_helper._read_ipc_frame(connection)
+                    received.append(request)
+                    easy_cr_helper._write_ipc_frame(
+                        connection,
+                        {
+                            "type": "response",
+                            "requestId": request["requestId"],
+                            "resultType": "success",
+                            "method": request["method"],
+                            "result": {"result": {"turn": {"id": "turn-1"}}},
+                        },
+                    )
+
+            worker = threading.Thread(target=serve_once)
+            worker.start()
+            result = easy_cr_helper.submit_codex_turn(
+                session_id,
+                "处理这条评论",
+                socket_path=socket_path,
+            )
+            worker.join(timeout=2)
+            server.close()
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(received[0]["method"], "initialize")
+        self.assertEqual(received[0]["params"]["clientType"], "easy-cr")
+        request = received[1]
+        self.assertEqual(request["method"], "thread-follower-start-turn")
+        self.assertEqual(request["version"], 1)
+        self.assertEqual(request["sourceClientId"], "easy-cr-client")
+        self.assertEqual(request["params"]["conversationId"], session_id)
+        self.assertEqual(
+            request["params"]["turnStartParams"]["input"],
+            [{"type": "text", "text": "处理这条评论"}],
+        )
+        self.assertEqual(result["resultType"], "success")
+
+    def test_default_launcher_uses_codex_desktop_ipc(self):
+        report = Path("/repo/.codex-artifacts/review.html")
+        session_id = "019f88f5-e5d7-7ff1-bac3-7c46ab1fd365"
+        with mock.patch.object(
+            easy_cr_helper,
+            "submit_codex_turn",
+        ) as submit, mock.patch.object(subprocess, "Popen") as popen:
+            easy_cr_helper._default_launcher(
+                {
+                    "client": "codex",
+                    "sessionId": session_id,
+                    "reportSubject": "帐期优化",
+                    "reviewBatchId": "batch-1",
+                    "reviewCommentIds": ["c1"],
+                },
+                report,
+            )
+
+        submit.assert_called_once()
+        self.assertEqual(submit.call_args.args[0], session_id)
+        self.assertIn("批次 batch-1", submit.call_args.args[1])
+        popen.assert_not_called()
 
     def test_launch_agent_uses_one_fixed_label_and_port(self):
         payload = easy_cr_helper.launch_agent_payload(

@@ -118,8 +118,13 @@ button { color:inherit }
 .chapter-comments { margin-top:18px; padding-top:14px; border-top:1px solid var(--border) }
 .chapter-comments-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px }
 .chapter-comments-head h3 { margin:0; font-size:13px }
-.mini-comment { width:100%; margin-bottom:7px; padding:8px 9px; border:0; border-left:3px solid var(--comment); border-radius:5px; background:var(--comment-soft); color:var(--muted); font-size:11px; text-align:left; cursor:pointer }
-.mini-comment:hover,.mini-comment.focus-target { color:var(--text); box-shadow:0 0 0 2px color-mix(in srgb,var(--comment) 34%,transparent) }
+.comment-state-pending { --comment-state:var(--comment); --comment-state-soft:var(--comment-soft) }
+.comment-state-processing { --comment-state:var(--success); --comment-state-soft:var(--success-soft) }
+.comment-state-resolved { --comment-state:var(--muted); --comment-state-soft:var(--surface-soft) }
+.mini-comment { width:100%; margin-bottom:7px; padding:8px 9px; border:0; border-left:3px solid var(--comment-state,var(--comment)); border-radius:5px; background:var(--comment-state-soft,var(--comment-soft)); color:var(--muted); font-size:11px }
+.mini-comment:hover,.mini-comment.focus-target { color:var(--text); box-shadow:0 0 0 2px color-mix(in srgb,var(--comment-state,var(--comment)) 34%,transparent) }
+.mini-comment-main { width:100%; padding:0; border:0; color:inherit; background:transparent; text-align:left; cursor:pointer }
+.mini-comment .comment-toolbar { justify-content:flex-end; margin-top:7px }
 .guided-footer { position:fixed; z-index:35; left:0; right:0; bottom:0; height:72px; display:grid; grid-template-columns:280px minmax(0,1fr) 360px; align-items:center; border-top:1px solid var(--border); background:color-mix(in srgb,var(--surface) 96%,transparent); backdrop-filter:blur(12px) }
 .guided-footer .previous { justify-self:center; min-width:170px }
 .guided-progress { text-align:center; font-weight:700 }
@@ -189,8 +194,8 @@ body.semantic-enabled .code-identifier:hover { color:var(--primary); text-decora
 .comment-actions { display:flex; justify-content:flex-end; gap:6px; margin-top:8px }
 .comment-actions button,.comment-toolbar button { padding:5px 8px; border:1px solid var(--border); border-radius:6px; color:var(--text); background:var(--surface-soft); cursor:pointer; font-size:11px }
 .comment-actions .save { color:#fff; border-color:var(--primary); background:var(--primary) }
-.inline-comment { min-width:600px; margin:7px 12px 9px 88px; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--comment-soft); color:var(--text); white-space:normal; font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif }
-.inline-comment.focus-target { box-shadow:0 0 0 2px color-mix(in srgb,var(--comment) 44%,transparent) }
+.inline-comment { min-width:600px; margin:7px 12px 9px 88px; padding:10px; border:1px solid var(--comment-state,var(--border)); border-radius:8px; background:var(--comment-state-soft,var(--comment-soft)); color:var(--text); white-space:normal; font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif }
+.inline-comment.focus-target { box-shadow:0 0 0 2px color-mix(in srgb,var(--comment-state,var(--comment)) 44%,transparent) }
 .comment-meta,.reply-meta { display:flex; justify-content:space-between; gap:10px; margin-bottom:5px; color:var(--muted); font-size:10px }
 .comment-toolbar { display:flex; gap:4px }
 .comment-toolbar button { padding:2px 6px; background:transparent }
@@ -209,6 +214,7 @@ body.semantic-enabled .code-identifier:hover { color:var(--primary); text-decora
 .comments-toolbar { display:flex; gap:6px; padding:9px 12px; border-bottom:1px solid var(--border) }
 .comments-list,.reference-list { overflow:auto; padding:10px }
 .comment-summary,.reference-item { width:100%; display:block; margin-bottom:7px; padding:10px; border:1px solid var(--border); border-radius:8px; color:var(--text); background:var(--surface); text-align:left; cursor:pointer }
+.comment-summary { border-color:var(--comment-state,var(--border)); background:var(--comment-state-soft,var(--surface)) }
 .comment-summary:hover,.reference-item:hover { border-color:var(--primary); background:var(--primary-soft) }
 .comment-summary-meta,.reference-location { margin-bottom:4px; color:var(--primary); font:10px ui-monospace,SFMono-Regular,Menlo,monospace }
 .comment-summary-text,.reference-preview { overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; color:var(--text); font-size:12px }
@@ -393,6 +399,7 @@ let semanticClearTimer = null;
 let semanticHighlightLocked = false;
 let semanticHighlightOrigin = null;
 let completeReviewResetTimer = null;
+let commentRefreshPending = false;
 const semanticReferenceCache = new Map();
 const chapterOverview = document.getElementById('chapter-overview');
 const guidedReview = document.getElementById('guided-review');
@@ -520,6 +527,29 @@ async function writeCommentsToHtml() {
   saveLocalDraft();
   setSaveState('', '');
   return next;
+}
+
+async function refreshCommentState() {
+  if (
+    helper.mode !== 'local'
+    || commentWritePending
+    || commentRefreshPending
+  ) return;
+  commentRefreshPending = true;
+  try {
+    const next = await helperRequest('/api/comments/read', {
+      reportId:report.reportId
+    });
+    if (Number(next.revision || 0) <= Number(commentState.revision || 0)) return;
+    commentState = next;
+    comments = next.comments.map(normalizeComment);
+    saveLocalDraft();
+    renderComments();
+  } catch (_) {
+    // Keep the current page usable while the helper is unavailable.
+  } finally {
+    commentRefreshPending = false;
+  }
 }
 
 async function persistMutation() {
@@ -1144,7 +1174,7 @@ function renderInlineComments() {
       }
       const targetLine = found.lines[found.end];
       const view = document.createElement('div');
-      view.className = 'inline-comment';
+      view.className = `inline-comment comment-state-${comment.status}`;
       view.id = `comment-${comment.id}`;
       const meta = document.createElement('div');
       meta.className = 'comment-meta';
@@ -1262,7 +1292,7 @@ function renderAllComments(filter=activeCommentsFilter) {
   values.sort((a,b) => COMMENT_STATUS_ORDER[a.status] - COMMENT_STATUS_ORDER[b.status]).forEach(comment => {
     const item = document.createElement('button');
     item.type = 'button';
-    item.className = 'comment-summary';
+    item.className = `comment-summary comment-state-${comment.status}`;
     item.innerHTML = '<div class="comment-summary-meta"></div><div class="comment-summary-text"></div><div class="comment-summary-state"></div>';
     item.querySelector('.comment-summary-meta').textContent = scopeLabel(comment);
     item.querySelector('.comment-summary-text').textContent = comment.body;
@@ -1316,13 +1346,29 @@ function renderChapterComments() {
   document.getElementById('chapter-comments-title').textContent = `本节评论（${values.length}）`;
   const host = document.getElementById('chapter-comments-list');
   host.replaceChildren();
-  values.slice(0, 4).forEach(comment => {
-    const item = document.createElement('button');
-    item.type = 'button';
+  values.forEach(comment => {
+    const item = document.createElement('div');
     item.id = `chapter-comment-${comment.id}`;
-    item.className = 'mini-comment';
-    item.textContent = `${COMMENT_STATUS_LABELS[comment.status]} · ${comment.body}`;
-    item.addEventListener('click', () => focusComment(comment));
+    item.className = `mini-comment comment-state-${comment.status}`;
+    const main = document.createElement('button');
+    main.type = 'button';
+    main.className = 'mini-comment-main';
+    main.textContent = `${COMMENT_STATUS_LABELS[comment.status]} · ${comment.body}`;
+    main.addEventListener('click', () => focusComment(comment));
+    const toolbar = document.createElement('div');
+    toolbar.className = 'comment-toolbar';
+    toolbar.append(
+      makeToolbarButton('编辑', () => openInlineEditor(item, comment.body, '修改评论…', async value => {
+        comment.body = value;
+        setCommentStatus(comment, 'pending');
+      })),
+      makeToolbarButton('删除', async () => {
+        if (!window.confirm('删除这条评论及其回复？')) return;
+        comments = comments.filter(value => value.id !== comment.id);
+        await persistMutation();
+      }, true)
+    );
+    item.append(main, toolbar);
     host.appendChild(item);
   });
 }
@@ -1728,6 +1774,16 @@ document.getElementById('next-step').addEventListener('click', nextStep);
 document.getElementById('comment-chapter').addEventListener('click', () => openScopedComment('chapter'));
 document.getElementById('comment-report').addEventListener('click', () => openScopedComment('document'));
 completeReviewButton.addEventListener('click', completeReview);
+window.addEventListener('focus', refreshCommentState);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') refreshCommentState();
+});
+window.setInterval(() => {
+  if (
+    document.visibilityState === 'visible'
+    && comments.some(comment => comment.status === 'processing')
+  ) refreshCommentState();
+}, 2000);
 document.getElementById('copy-comments').addEventListener('click', async event => {
   const content = comments.map((comment,index) => `${index + 1}. ${scopeLabel(comment)}\n   ${comment.body}`).join('\n\n') || '暂无评论';
   try {
