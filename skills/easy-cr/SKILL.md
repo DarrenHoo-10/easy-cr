@@ -99,7 +99,7 @@ The base HTML always supports:
 - Dark/light themes.
 - Document, chapter, selected-text and line comments.
 - Left-selection highlights exact repeated text on the current page; right-click exposes comment and AI explanation actions, including selections that cross the line-number gutter.
-- Selected-code `不懂就问` opens an inline code Q&A box below the code. The reviewer asks the first question before any request is sent and can continue with follow-up questions; answers stream in place. The left caret toggles collapse state and there is no close action.
+- Selected-code `不懂就问` opens an inline code Q&A box below the code. The reviewer asks the first question before any request is sent and can continue with follow-up questions; answers stream in place. The current report stores its Q&A state in browser session storage keyed by `reportId`, so a refresh restores it while regenerated reports do not migrate it. The left caret toggles collapse state and there is no close action.
 - Comment edit, delete, reply, resolve, summary popover and copy.
 - Persistence into the current HTML through the single local Easy CR helper, with a local pending draft while the service is unavailable.
 - No reviewed-copy export and no browser file picker.

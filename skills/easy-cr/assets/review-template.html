@@ -409,6 +409,7 @@ const COMMENT_STATUS_ORDER = {pending:0, processing:1, resolved:2};
 const commentStorageKey = `easy-cr-comments:${report.reportId}`;
 const legacyCommentStorageKey = `codex-cr-comments:${report.commit}`;
 const commentDraftPrefix = `easy-cr-comment-draft:${report.reportId}:`;
+const codeQaStorageKey = `easy-cr-code-qa:${report.reportId}`;
 const themeStorageKey = 'easy-cr-theme';
 const embeddedCommentStateAtLoad = JSON.parse(document.getElementById(COMMENTS_ELEMENT_ID).textContent);
 let commentState = readEmbeddedCommentState();
@@ -1245,7 +1246,22 @@ function closeExplanation() {
   activeExplainBox = null;
 }
 
-function createExplanationBox(draft) {
+function readCodeQaState() {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(codeQaStorageKey) || 'null');
+    return value && typeof value === 'object' ? value : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeCodeQaState(value) {
+  try {
+    sessionStorage.setItem(codeQaStorageKey, JSON.stringify(value));
+  } catch (_) {}
+}
+
+function createExplanationBox(draft, state) {
   closeExplanation();
   const endLine = draft.lines[draft.end];
   const box = document.createElement('div');
@@ -1257,7 +1273,14 @@ function createExplanationBox(draft) {
     const expanded = !box.classList.contains('collapsed');
     toggle.textContent = expanded ? '▾' : '▸';
     toggle.setAttribute('aria-expanded', String(expanded));
+    state.collapsed = !expanded;
+    writeCodeQaState(state);
   });
+  if (state.collapsed) {
+    box.classList.add('collapsed');
+    toggle.textContent = '▸';
+    toggle.setAttribute('aria-expanded', 'false');
+  }
   endLine.insertAdjacentElement('afterend', box);
   activeExplainBox = box;
   return box;
@@ -1273,13 +1296,40 @@ function appendExplanationMessage(thread, role, content = '') {
   return message;
 }
 
-function explainTextSelection(draft) {
-  const box = createExplanationBox(draft);
+function explainTextSelection(draft, restoredState=null) {
+  const target = selectedCodeTarget(draft);
+  const state = restoredState || {
+    view:activeView,
+    chapterId:target.chapterId,
+    stepId:target.stepId,
+    target,
+    quote:draft.quote,
+    history:[],
+    input:'',
+    collapsed:false
+  };
+  state.view = activeView;
+  state.chapterId = target.chapterId;
+  state.stepId = target.stepId;
+  state.target = target;
+  state.quote = draft.quote;
+  state.history = Array.isArray(state.history) ? state.history : [];
+  state.input = typeof state.input === 'string' ? state.input : '';
+  state.collapsed = Boolean(state.collapsed);
+  writeCodeQaState(state);
+  const box = createExplanationBox(draft, state);
   const thread = box.querySelector('.explain-thread');
   const textarea = box.querySelector('textarea');
   const send = box.querySelector('.explain-send');
-  const history = [];
+  const history = [...state.history];
   let busy = false;
+
+  history.forEach(item => appendExplanationMessage(thread, item.role, item.content));
+  textarea.value = state.input;
+  textarea.addEventListener('input', () => {
+    state.input = textarea.value;
+    writeCodeQaState(state);
+  });
 
   const ask = async () => {
     const question = textarea.value.trim();
@@ -1297,8 +1347,12 @@ function explainTextSelection(draft) {
     textarea.disabled = true;
     const priorHistory = history.slice(-8);
     appendExplanationMessage(thread, 'user', question);
+    history.push({role:'user', content:question});
+    state.history = history.slice(-8);
     const answer = appendExplanationMessage(thread, 'assistant', '正在思考…');
     textarea.value = '';
+    state.input = '';
+    writeCodeQaState(state);
     try {
       const response = await fetch(`${helper.endpoint}/api/explain`, {
         method:'POST',
@@ -1333,10 +1387,9 @@ function explainTextSelection(draft) {
         answer.textContent += decoder.decode();
       }
       if (!answer.textContent.trim()) answer.textContent = '未生成回答';
-      history.push(
-        {role:'user', content:question},
-        {role:'assistant', content:answer.textContent}
-      );
+      history.push({role:'assistant', content:answer.textContent});
+      state.history = history.slice(-8);
+      writeCodeQaState(state);
     } catch (error) {
       answer.classList.add('error');
       answer.textContent = error.message;
@@ -1355,6 +1408,40 @@ function explainTextSelection(draft) {
     ask();
   });
   textarea.focus();
+}
+
+function restoreCodeQa() {
+  const state = readCodeQaState();
+  if (!state?.target || !state.quote) return;
+  const chapterIndex = chapters.findIndex(item => item.id === state.chapterId);
+  if (state.view === 'guided' && chapterIndex >= 0) {
+    activeChapterIndex = chapterIndex;
+    const stepIndex = chapters[chapterIndex].steps.findIndex(item => item.id === state.stepId);
+    activeStepIndex = stepIndex >= 0 ? stepIndex : 0;
+    returnView = 'overview';
+    showView('guided');
+  } else {
+    showView('full');
+  }
+  const root = activeView === 'guided' ? document.getElementById('guided-code') : fullDiffs;
+  const fileKeyValue = `${state.target.repoId}:${state.target.path}`;
+  const card = root.querySelector(`.file-card[data-file-key="${CSS.escape(fileKeyValue)}"]`);
+  if (!card) return;
+  const lines = [...card.querySelectorAll('.line')];
+  const start = lines.findIndex(line => line.dataset.anchor === state.target.startAnchor);
+  const end = lines.findIndex(line => line.dataset.anchor === state.target.endAnchor);
+  if (start < 0 || end < start) return;
+  lines.slice(start, end + 1).forEach(line => line.classList.add('selected'));
+  explainTextSelection({
+    card,
+    lines,
+    start,
+    end,
+    startOffset:Number(state.target.startOffset || 0),
+    endOffset:Number(state.target.endOffset || 0),
+    quote:state.quote
+  }, state);
+  activeExplainBox?.scrollIntoView({block:'center'});
 }
 
 function openLineComment(line, card, extend) {
@@ -2215,6 +2302,7 @@ function initialize() {
   renderFullDiffGroups();
   renderOverview();
   renderComments();
+  restoreCodeQa();
   completeReviewButton.disabled = helper.mode !== 'local' || !helper.agentBound;
   if (helper.mode !== 'local') {
     completeReviewButton.title = helper.error || 'Easy CR 评论服务未连接';

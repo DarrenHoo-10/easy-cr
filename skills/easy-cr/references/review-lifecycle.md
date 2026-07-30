@@ -31,7 +31,7 @@ easy-cr comments <report> --resolve-batch <batch-id> --reply <result>
 - New, edited, replied-to, or reopened comments are `pending`.
 - A successful send changes only the requested pending comments to `processing` and writes their `aiBatchId`.
 - Agent completion replies to each matching processing comment with the handling result, then changes only those comments to `resolved`.
-- Selected-code `不懂就问` uses the same registered report token. The first request contains the selected code and the reviewer's question; later requests may include the bounded in-page question history. Answers stream below the selected code with a left caret collapse toggle, and do not write comments, change statuses, or modify files.
+- Selected-code `不懂就问` uses the same registered report token. The first request contains the selected code and the reviewer's question; later requests may include the bounded in-page question history. The current report keeps completed Q&A turns, unsent input, target, view, and collapse state in browser session storage keyed by `reportId`, so refreshing the same page restores them; report regeneration does not migrate this state. Answers stream below the selected code with a left caret collapse toggle, and do not write comments, change statuses, or modify files.
 - Report regeneration on the same path preserves comment ids, replies, timestamps, status, and batch metadata while updating `reportId`.
 - Exact code anchors are preferred. A failed exact match may move only within the same repository and file and must set `target.approximate=true`.
 - Every changed production line except tests, dependency files, and conservatively recognized import-only changes must be visible in a business chapter.
