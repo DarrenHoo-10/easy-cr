@@ -7,6 +7,39 @@ description: Generate an interactive HTML code review organized from top to bott
 
 Generate one self-contained HTML review. Start from technical-plan chapters, then explain each chapter in business execution order. Put pre-generated explanations beside the smallest complete code unit needed to understand each step.
 
+## Smallest complete code unit
+
+“Smallest” never means the fewest lines. It means the smallest syntactically
+closed, independently reviewable unit that expresses one complete business
+decision, state change, or external call.
+
+- Prefer one complete function or method.
+- For a complete Go function or method, prefer a semantic range such as
+  `{"unit_id":"check-reminder","unit_type":"function","symbol":"ShouldTriggerReminder"}`
+  and let Easy CR resolve its current start/end lines. Use `Type.Method` when a
+  bare method name is not unique.
+- Split a function only when every resulting range remains a complete logical
+  block, such as a full `if`/`else`, `switch` case, loop, request construction
+  plus call and error handling, or a contiguous statement group with a clear
+  input and result.
+- Never cut through a multi-line function signature, condition expression,
+  call argument list, chained expression, struct/object literal, control-flow
+  block, or its error-handling path.
+- Keep a declaration's leading documentation comment with that declaration.
+- One `ranges` entry represents one complete logical unit. When a step needs
+  multiple units, use multiple ranges instead of one broad range crossing unit
+  boundaries.
+- For a logical block inside a long method, provide stable `unit_id`,
+  `unit_type` (`block` or `statements`), and explicit `start`/`end`. Reuse the
+  same `unit_id` when later business steps refer to that exact unit.
+- When the same complete logical unit supports multiple business steps, the
+  first step in business order owns and highlights the entire unit. Later steps
+  show the entire unit as a gray peer-step change. A single logical unit must
+  never be split into partly highlighted and partly gray Diff.
+- Before rendering, inspect the first and last line of every range together
+  with at least three surrounding lines. Expand, shrink, or split any range
+  whose boundary is not syntactically and logically complete.
+
 ## First-use editor choice
 
 Before the first review, inspect the shared configuration:
@@ -45,6 +78,7 @@ When `easy-cr` is not installed yet, run `python3 "${SKILL_DIR}/../../scripts/in
    - Prefer schema v2 and model repositories, chapters, steps, and code ranges explicitly.
    - Keep `flow` to 3–6 nodes and order chapters/steps by business execution.
    - One chapter may reference code from multiple repositories; generate one report, not one report per repository.
+   - When one file or method supports multiple business steps, divide it only at complete logical-unit boundaries. The first chapter/step that uses a shared unit owns the entire unit; later steps render the entire unit as a gray peer-step change.
    - Write goal, decision, result, explanation, and code annotations while generating the manifest. They are static report content, not browser-time AI output.
    - Put IDL and non-import production changes in the business step they support.
    - Keep test-file diffs out of chapter guidance; they remain available in complete Diff.
@@ -116,6 +150,7 @@ The base HTML always supports:
 - Regeneration preserves historical comments. Exact anchors are retained when possible; otherwise code comments move near matching code in the same file. Deleted files safely no-op.
 - Previously reviewed additions use light green, current feedback changes use deep green, and deletions use light red.
 - The report header explains all code colors: additions, feedback changes, deletions, peer-step changes, and comment locations.
+- A complete logical unit is highlighted as the current change in at most one business step. If multiple steps use it, the first step in business order owns the entire unit and every later step renders the entire unit as a gray peer-step change; the unit is never split into mixed current/peer colors and report generation continues normally.
 - Previous and next navigation both name their destination; the outer edges return to the chapter overview.
 - `Enter` saves; `Command+Enter` and `Shift+Enter` insert a newline.
 
