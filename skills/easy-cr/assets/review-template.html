@@ -920,15 +920,16 @@ function applyGuidedDisplayMode(card, references) {
     return;
   }
   const allReferences = referencesForFile(fileKeyValue);
+  const currentStepKey = `${chapter.id}:${step.id}`;
   const currentRanges = allReferences
     .filter(item => item.chapterId === chapter.id && item.stepId === step.id)
     .flatMap(item => item.reference.ranges || []);
-  const peerRanges = allReferences
-    .filter(item => item.chapterId !== chapter.id || item.stepId !== step.id)
-    .flatMap(item => item.reference.ranges || []);
   lines.forEach(line => {
-    const active = lineInRanges(line, currentRanges);
-    const peer = !active && changedLine(line) && lineInRanges(line, peerRanges);
+    const changed = changedLine(line);
+    const active = changed
+      ? line.dataset.stepOwner === currentStepKey
+      : lineInRanges(line, currentRanges);
+    const peer = changed && Boolean(line.dataset.stepOwner) && !active;
     if (!active && !peer && !line.classList.contains('hunk')) line.classList.add('hidden');
     if (peer) line.classList.add('peer-step-change');
   });

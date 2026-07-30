@@ -44,6 +44,7 @@ HUNK_PATTERN = re.compile(
 )
 IDENTIFIER_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 DISPLAY_MODES = frozenset({"diff-only", "compact-context", "guided"})
+LOGICAL_UNIT_TYPES = frozenset({"function", "block", "statements", "range"})
 DEPENDENCY_FILES = frozenset({
     "go.mod", "go.sum", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
     "bun.lock", "bun.lockb", "cargo.lock", "poetry.lock", "pipfile.lock",
@@ -405,10 +406,12 @@ def render_file_card(
     index: int,
     repo_id: str,
     repo_label: str,
+    step_references: list[tuple[str, dict[str, Any]]] | None = None,
 ) -> str:
     rendered_lines: list[str] = []
     block_comment = False
     is_go = item.path.endswith(".go")
+    step_references = step_references or []
     for line in item.lines:
         if line.kind == "hunk":
             block_comment = False
@@ -422,10 +425,22 @@ def render_file_card(
         classes = f"line {line.kind}"
         if line.iteration_change:
             classes += " iteration-change"
+        owner, logical_unit = first_step_assignment(step_references, line)
+        owner_attribute = (
+            f' data-step-owner="{html.escape(owner, quote=True)}"'
+            if owner
+            else ""
+        )
+        unit_attribute = (
+            f' data-logical-unit="{html.escape(logical_unit, quote=True)}"'
+            if logical_unit
+            else ""
+        )
         rendered_lines.append(
             f'<div class="{classes}" data-old-line="{old_value}" '
             f'data-new-line="{new_value}" '
-            f'data-anchor="{html.escape(anchor, quote=True)}">'
+            f'data-anchor="{html.escape(anchor, quote=True)}"'
+            f'{owner_attribute}{unit_attribute}>'
             f"<span>{body}</span></div>"
         )
     path = html.escape(item.path)
@@ -444,6 +459,67 @@ def render_file_card(
         f'  <div class="diff">{"".join(rendered_lines)}</div>\n'
         "</details>"
     )
+
+
+def step_references_by_file(
+    chapters: list[dict[str, Any]],
+) -> dict[str, list[tuple[str, dict[str, Any]]]]:
+    references: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    for chapter in chapters:
+        for step in chapter["steps"]:
+            step_key = f"{chapter['id']}:{step['id']}"
+            for reference in step["code"]:
+                references.setdefault(reference["fileKey"], []).append(
+                    (step_key, reference)
+                )
+    return references
+
+
+def first_step_owner(
+    step_references: list[tuple[str, dict[str, Any]]],
+    line: DiffLine,
+) -> str:
+    return first_step_assignment(step_references, line)[0]
+
+
+def first_step_assignment(
+    step_references: list[tuple[str, dict[str, Any]]],
+    line: DiffLine,
+) -> tuple[str, str]:
+    if line.kind not in {"add", "del"}:
+        return "", ""
+    number = line.new_line if line.new_line is not None else line.old_line
+    if number is None:
+        return "", ""
+    unit_order: list[str] = []
+    unit_owners: dict[str, str] = {}
+    unit_ranges: dict[str, list[tuple[int, int]] | None] = {}
+    for step_key, reference in step_references:
+        ranges = reference.get("ranges") or []
+        if not ranges:
+            unit_id = f"{reference.get('fileKey', 'file')}:file"
+            if unit_id not in unit_owners:
+                unit_order.append(unit_id)
+                unit_owners[unit_id] = step_key
+                unit_ranges[unit_id] = None
+            continue
+        for value in ranges:
+            unit_id = str(
+                value.get("unitId")
+                or f"{reference.get('fileKey', 'file')}:"
+                f"{value['start']}-{value['end']}"
+            )
+            if unit_id not in unit_owners:
+                unit_order.append(unit_id)
+                unit_owners[unit_id] = step_key
+                unit_ranges[unit_id] = []
+            if unit_ranges[unit_id] is not None:
+                unit_ranges[unit_id].append((value["start"], value["end"]))
+    for unit_id in unit_order:
+        ranges = unit_ranges[unit_id]
+        if ranges is None or any(start <= number <= end for start, end in ranges):
+            return unit_owners[unit_id], unit_id
+    return "", ""
 
 
 def resolve_diff(
@@ -646,6 +722,103 @@ def default_display_mode(item: DiffFile) -> str:
     return "compact-context"
 
 
+def reviewed_source(repository: RepositoryReview, path: str) -> str:
+    if repository.head == "WORKTREE":
+        target = repository.root / path
+        return target.read_text() if target.is_file() else ""
+    result = run_git(
+        repository.root,
+        "show",
+        f"{repository.revision['headCommit']}:{path}",
+        check=False,
+    )
+    return result.stdout if result.returncode == 0 else ""
+
+
+def go_function_units(source: str) -> dict[str, tuple[int, int]]:
+    lines = source.splitlines()
+    declaration = re.compile(
+        r"^\s*func\s*(?:\((?P<receiver>[^)]*)\)\s*)?"
+        r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b"
+    )
+    units: dict[str, tuple[int, int]] = {}
+    for index, line in enumerate(lines):
+        match = declaration.match(line)
+        if match is None:
+            continue
+        depth = 0
+        opened = False
+        in_block_comment = False
+        quote = ""
+        escaped = False
+        end_line = index + 1
+        for scan_index in range(index, len(lines)):
+            text = lines[scan_index]
+            cursor = 0
+            while cursor < len(text):
+                char = text[cursor]
+                next_char = text[cursor + 1] if cursor + 1 < len(text) else ""
+                if in_block_comment:
+                    if char == "*" and next_char == "/":
+                        in_block_comment = False
+                        cursor += 2
+                        continue
+                    cursor += 1
+                    continue
+                if quote:
+                    if quote != "`" and escaped:
+                        escaped = False
+                    elif quote != "`" and char == "\\":
+                        escaped = True
+                    elif char == quote:
+                        quote = ""
+                    cursor += 1
+                    continue
+                if char == "/" and next_char == "/":
+                    break
+                if char == "/" and next_char == "*":
+                    in_block_comment = True
+                    cursor += 2
+                    continue
+                if char in {'"', "'", "`"}:
+                    quote = char
+                    cursor += 1
+                    continue
+                if char == "{":
+                    depth += 1
+                    opened = True
+                elif char == "}" and opened:
+                    depth -= 1
+                    if depth == 0:
+                        end_line = scan_index + 1
+                        break
+                cursor += 1
+            if opened and depth == 0:
+                break
+        start_line = index + 1
+        comment_index = index - 1
+        while comment_index >= 0 and lines[comment_index].lstrip().startswith("//"):
+            start_line = comment_index + 1
+            comment_index -= 1
+        name = match.group("name")
+        units.setdefault(name, (start_line, end_line))
+        receiver = match.group("receiver") or ""
+        receiver_names = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", receiver)
+        if receiver_names:
+            units[f"{receiver_names[-1]}.{name}"] = (start_line, end_line)
+    return units
+
+
+def resolve_function_unit(
+    repository: RepositoryReview,
+    path: str,
+    symbol: str,
+) -> tuple[int, int] | None:
+    if not path.endswith(".go"):
+        return None
+    return go_function_units(reviewed_source(repository, path)).get(symbol)
+
+
 def normalize_code_reference(
     raw: Any,
     repositories: dict[str, RepositoryReview],
@@ -667,7 +840,7 @@ def normalize_code_reference(
     ranges = raw.get("ranges", [])
     if not isinstance(ranges, list):
         raise ValueError(f"{context}.ranges must be a list")
-    normalized_ranges: list[dict[str, int]] = []
+    normalized_ranges: list[dict[str, Any]] = []
     changed_lines = {
         line.new_line if line.new_line is not None else line.old_line
         for line in item.lines
@@ -678,8 +851,30 @@ def normalize_code_reference(
         range_context = f"{context}.ranges[{range_index}]"
         if not isinstance(value, dict):
             raise ValueError(f"{range_context} must be an object")
+        unit_type = str(value.get("unit_type") or "range")
+        if unit_type not in LOGICAL_UNIT_TYPES:
+            raise ValueError(f"{range_context}.unit_type is invalid: {unit_type}")
+        symbol = str(value.get("symbol") or "").strip()
         start = value.get("start")
         end = value.get("end")
+        if unit_type == "function" and symbol:
+            resolved = resolve_function_unit(repository, path, symbol)
+            if resolved is not None:
+                start, end = resolved
+            else:
+                print(
+                    f"easy-cr: {repo_id}:{path} 未解析到函数 {symbol}，"
+                    "沿用显式范围",
+                    file=sys.stderr,
+                )
+        if not isinstance(start, int) or not isinstance(end, int):
+            if changed_lines:
+                start, end = min(changed_lines), max(changed_lines)
+                print(
+                    f"easy-cr: {range_context} 缺少可解析边界，"
+                    f"已回退到变更范围 {start}-{end}",
+                    file=sys.stderr,
+                )
         if (
             not isinstance(start, int)
             or not isinstance(end, int)
@@ -689,7 +884,18 @@ def normalize_code_reference(
             raise ValueError(f"{range_context} must contain valid start/end")
         if not any(start <= line <= end for line in changed_lines):
             raise ValueError(f"{range_context} must include a changed line")
-        normalized_ranges.append({"start": start, "end": end})
+        unit_id = str(
+            value.get("unit_id")
+            or symbol
+            or f"{path}:{start}-{end}"
+        ).strip()
+        normalized_ranges.append({
+            "start": start,
+            "end": end,
+            "unitId": unit_id,
+            "unitType": unit_type,
+            "symbol": symbol,
+        })
     return {
         "repoId": repo_id,
         "path": path,
@@ -863,6 +1069,8 @@ def validate_diff_coverage(
             import_indexes = import_change_indexes(item)
             for line_index, line in enumerate(item.lines):
                 if line.kind not in {"add", "del"}:
+                    continue
+                if not line.text[1:].strip():
                     continue
                 if line_index in import_indexes:
                     continue
@@ -1168,6 +1376,7 @@ def main(argv: list[str] | None = None) -> int:
         previous_state if has_sent_review_feedback(previous_html) else None,
     )
     manifest = normalize_manifest(raw_manifest, schema_version, repositories)
+    step_references = step_references_by_file(manifest["chapters"])
     report_id = report_identifier(manifest, repositories)
     semantic, warning = resolve_semantic(
         args.config_file,
@@ -1245,6 +1454,7 @@ def main(argv: list[str] | None = None) -> int:
             index,
             repository.id,
             repository.label,
+            step_references.get(f"{repository.id}:{item.path}", []),
         )
         for index, (repository, item) in enumerate(files)
     )

@@ -80,12 +80,20 @@ class PluginManifestTest(unittest.TestCase):
 
     def test_skill_gates_discussion_batches_before_code_changes(self):
         skill = (SKILL_DIR / "SKILL.md").read_text()
+        schema = (SKILL_DIR / "references" / "manifest-schema.md").read_text()
 
         self.assertIn("do not change code yet", skill)
         self.assertIn("Present every such item together", skill)
         self.assertIn("--resolve-batch <batch-id>", skill)
         self.assertIn("--reply \"处理结果", skill)
         self.assertIn("未处理 → 处理中 → 已解决", skill)
+        self.assertIn("Smallest complete code unit", skill)
+        self.assertIn("Smallest” never means the fewest lines", skill)
+        self.assertIn("Never cut through a multi-line function signature", skill)
+        self.assertIn("entire unit as a gray peer-step change", skill)
+        self.assertIn("partly highlighted and partly gray Diff", skill)
+        self.assertIn("完整逻辑单元", schema)
+        self.assertIn("不得在同一逻辑单元内部出现部分高亮、部分置灰", schema)
         self.assertNotIn("Use “补充其他改动”", skill)
 
 
@@ -566,6 +574,7 @@ class TemplateContractTest(unittest.TestCase):
         self.assertNotIn(">收起</button><button", template)
         self.assertIn("applyGuidedDisplayMode", template)
         self.assertIn("peer-step-change", template)
+        self.assertIn("line.dataset.stepOwner === currentStepKey", template)
         self.assertIn("values.forEach(comment => {", template)
         self.assertNotIn("values.slice(0, 4).forEach(comment => {", template)
         self.assertIn("main.className = 'mini-comment-main'", template)
@@ -580,6 +589,101 @@ class TemplateContractTest(unittest.TestCase):
         self.assertNotIn("/api/ai", template)
         self.assertNotIn("fetchExplanation", template)
         self.assertNotIn("showSelectionMenu(captured.rect)", template)
+
+    def test_first_business_step_owns_overlapping_diff_line(self):
+        references = [
+            (
+                "chapter:first",
+                {
+                    "ranges": [{"start": 4, "end": 8}],
+                },
+            ),
+            (
+                "chapter:second",
+                {
+                    "ranges": [{"start": 6, "end": 12}],
+                },
+            ),
+        ]
+
+        self.assertEqual(
+            build_review.first_step_owner(
+                references,
+                build_review.DiffLine("+shared", "add", new_line=6),
+            ),
+            "chapter:first",
+        )
+        self.assertEqual(
+            build_review.first_step_owner(
+                references,
+                build_review.DiffLine("+second only", "add", new_line=10),
+            ),
+            "chapter:second",
+        )
+        self.assertEqual(
+            build_review.first_step_owner(
+                references,
+                build_review.DiffLine(" unchanged", "ctx", new_line=6),
+            ),
+            "",
+        )
+        rendered = build_review.render_file_card(
+            build_review.DiffFile(
+                "service.go",
+                lines=[
+                    build_review.DiffLine("+shared", "add", new_line=6),
+                    build_review.DiffLine("+second only", "add", new_line=10),
+                ],
+                added=2,
+            ),
+            0,
+            "repo",
+            "repo",
+            references,
+        )
+        self.assertIn('data-step-owner="chapter:first"', rendered)
+        self.assertIn('data-step-owner="chapter:second"', rendered)
+
+    def test_shared_logical_unit_is_owned_as_a_whole_by_first_step(self):
+        references = [
+            (
+                "chapter:first",
+                {
+                    "fileKey": "repo:service.go",
+                    "ranges": [{
+                        "start": 4,
+                        "end": 8,
+                        "unitId": "shared-check",
+                    }],
+                },
+            ),
+            (
+                "chapter:second",
+                {
+                    "fileKey": "repo:service.go",
+                    "ranges": [{
+                        "start": 6,
+                        "end": 12,
+                        "unitId": "shared-check",
+                    }],
+                },
+            ),
+        ]
+
+        self.assertEqual(
+            build_review.first_step_assignment(
+                references,
+                build_review.DiffLine("+first side", "add", new_line=5),
+            ),
+            ("chapter:first", "shared-check"),
+        )
+        self.assertEqual(
+            build_review.first_step_assignment(
+                references,
+                build_review.DiffLine("+second side", "add", new_line=11),
+            ),
+            ("chapter:first", "shared-check"),
+        )
 
     def test_report_chrome_uses_single_navy_accent_and_home_button(self):
         template = TEMPLATE_PATH.read_text()
@@ -1143,6 +1247,25 @@ class BuildReviewTest(unittest.TestCase):
             "<main><code>@@TOKEN_FROM_REVIEWED_SOURCE@@</code></main>",
         )
 
+    def test_go_function_unit_includes_documentation_and_full_body(self):
+        source = (
+            "package sample\n\n"
+            "// Run executes the request.\n"
+            "func (service *Service) Run(\n"
+            "\tvalue int,\n"
+            ") int {\n"
+            "\tif value > 0 {\n"
+            "\t\treturn value\n"
+            "\t}\n"
+            "\treturn 0\n"
+            "}\n"
+        )
+
+        units = build_review.go_function_units(source)
+
+        self.assertEqual(units["Run"], (3, 11))
+        self.assertEqual(units["Service.Run"], (3, 11))
+
     def git(self, repo: Path, *args: str) -> str:
         result = subprocess.run(
             ["git", "-C", str(repo), *args],
@@ -1402,6 +1525,142 @@ class BuildReviewTest(unittest.TestCase):
         self.assertIn('"schemaVersion": 2', rendered)
         self.assertIn('"displayMode": "diff-only"', rendered)
 
+    def test_overlapping_step_ranges_render_with_first_step_ownership(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            repo = self.make_named_repo(
+                root,
+                "repo",
+                "service.go",
+                "package sample\n\nfunc Run() int {\n\treturn 1\n}\n",
+                "package sample\n\nfunc Run() int {\n\tvalue := 2\n\treturn value\n}\n",
+            )
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({
+                "schema_version": 2,
+                "subject": "共享方法",
+                "scope": "同一方法支撑两个步骤。",
+                "summary": "重复范围不阻断报告生成。",
+                "boundary": "测试。",
+                "repositories": [{
+                    "id": "repo",
+                    "root": str(repo),
+                    "base": "HEAD^",
+                    "head": "HEAD",
+                }],
+                "chapters": [{
+                    "id": "flow",
+                    "title": "处理流程",
+                    "steps": [
+                        {
+                            "id": "first",
+                            "title": "第一步",
+                            "explanation": "首次展示共享改动。",
+                            "code": [{
+                                "repo_id": "repo",
+                                "path": "service.go",
+                                "display_mode": "guided",
+                                "ranges": [{"start": 3, "end": 6}],
+                            }],
+                        },
+                        {
+                            "id": "second",
+                            "title": "第二步",
+                            "explanation": "后续仅置灰共享改动。",
+                            "code": [{
+                                "repo_id": "repo",
+                                "path": "service.go",
+                                "display_mode": "guided",
+                                "ranges": [{"start": 4, "end": 6}],
+                            }],
+                        },
+                    ],
+                }],
+            }, ensure_ascii=False))
+            config = root / "config.json"
+            easy_cr_config.write_editor("none", config)
+            output = root / "review.html"
+
+            build_review.main([
+                "--manifest", str(manifest),
+                "--output", str(output),
+                "--config-file", str(config),
+                "--token-file", str(root / "token"),
+            ])
+            rendered = output.read_text()
+
+        self.assertIn('data-step-owner="flow:first"', rendered)
+        self.assertNotIn('data-step-owner="flow:second"', rendered)
+        self.assertIn("line.dataset.stepOwner === currentStepKey", rendered)
+
+    def test_go_function_symbol_resolves_complete_logical_unit(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            repo = self.make_named_repo(
+                root,
+                "repo",
+                "service.go",
+                "package sample\n\nfunc Run() int {\n\treturn 1\n}\n",
+                (
+                    "package sample\n\n"
+                    "// Run returns the reviewed value.\n"
+                    "func Run() int {\n"
+                    "\tvalue := 2\n"
+                    "\treturn value\n"
+                    "}\n"
+                ),
+            )
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({
+                "schema_version": 2,
+                "subject": "函数逻辑单元",
+                "scope": "按函数符号解析完整边界。",
+                "summary": "不手写函数起止行。",
+                "boundary": "测试。",
+                "repositories": [{
+                    "id": "repo",
+                    "root": str(repo),
+                    "base": "HEAD^",
+                    "head": "HEAD",
+                }],
+                "chapters": [{
+                    "id": "flow",
+                    "title": "处理流程",
+                    "steps": [{
+                        "id": "run",
+                        "title": "执行",
+                        "explanation": "完整展示 Run。",
+                        "code": [{
+                            "repo_id": "repo",
+                            "path": "service.go",
+                            "display_mode": "guided",
+                            "ranges": [{
+                                "unit_id": "run-function",
+                                "unit_type": "function",
+                                "symbol": "Run",
+                            }],
+                        }],
+                    }],
+                }],
+            }, ensure_ascii=False))
+            config = root / "config.json"
+            easy_cr_config.write_editor("none", config)
+            output = root / "review.html"
+
+            build_review.main([
+                "--manifest", str(manifest),
+                "--output", str(output),
+                "--config-file", str(config),
+                "--token-file", str(root / "token"),
+            ])
+            rendered = output.read_text()
+
+        self.assertIn('"unitId": "run-function"', rendered)
+        self.assertIn('"unitType": "function"', rendered)
+        self.assertIn('"start": 3', rendered)
+        self.assertIn('"end": 7', rendered)
+        self.assertIn('data-logical-unit="run-function"', rendered)
+
     def test_v1_manifest_is_normalized_to_default_repository(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1562,6 +1821,50 @@ class BuildReviewTest(unittest.TestCase):
         }]
 
         build_review.validate_diff_coverage(chapters, [repository])
+
+    def test_guided_ranges_exempt_blank_separator_changes(self):
+        files = build_review.parse_diff(
+            "diff --git a/service.go b/service.go\n"
+            "--- a/service.go\n"
+            "+++ b/service.go\n"
+            "@@ -1,2 +1,4 @@\n"
+            " package sample\n"
+            "+func Run() {}\n"
+            "+\n"
+            " var value = 1\n"
+        )
+        repository = build_review.RepositoryReview(
+            id="repo",
+            label="repo",
+            root=Path("/repo"),
+            base="HEAD^",
+            head="HEAD",
+            context=10,
+            revision={
+                "headCommit": "a" * 40,
+                "reviewType": "revision",
+                "fingerprint": "a" * 40,
+            },
+            files=files,
+            subject="test",
+            author="test",
+            authored_at="test",
+        )
+        reference = build_review.normalize_code_reference(
+            {
+                "repo_id": "repo",
+                "path": "service.go",
+                "display_mode": "guided",
+                "ranges": [{"start": 2, "end": 2}],
+            },
+            {"repo": repository},
+            "test",
+        )
+
+        build_review.validate_diff_coverage(
+            [{"steps": [{"code": [reference]}]}],
+            [repository],
+        )
 
     def test_regeneration_preserves_comments_and_marks_current_iteration(self):
         with tempfile.TemporaryDirectory() as temp:
