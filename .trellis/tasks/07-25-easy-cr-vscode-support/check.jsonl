@@ -1,2 +1,0 @@
-{"file": ".trellis/tasks/07-25-easy-cr-vscode-support/prd.md", "reason": "逐项核对 VS Code Adapter 的验收标准。"}
-{"file": ".trellis/tasks/07-25-easy-cr-vscode-support/design.md", "reason": "检查协议、安全边界、远程限制和 VSIX 内容是否符合设计。"}
