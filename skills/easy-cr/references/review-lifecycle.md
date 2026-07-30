@@ -31,7 +31,7 @@ easy-cr comments <report> --resolve-batch <batch-id> --reply <result>
 - New, edited, replied-to, or reopened comments are `pending`.
 - A successful send changes only the requested pending comments to `processing` and writes their `aiBatchId`.
 - Agent completion replies to each matching processing comment with the handling result, then changes only those comments to `resolved`.
-- Selected-code explanation uses the same registered report token and streams text only; it does not write comments, change statuses, or modify files.
+- Selected-code explanation uses the same registered report token and streams text only; it renders below the selected code with a left caret collapse toggle, and does not write comments, change statuses, or modify files.
 - Report regeneration on the same path preserves comment ids, replies, timestamps, status, and batch metadata while updating `reportId`.
 - Exact code anchors are preferred. A failed exact match may move only within the same repository and file and must set `target.approximate=true`.
 - Every changed production line except tests, dependency files, and conservatively recognized import-only changes must be visible in a business chapter.

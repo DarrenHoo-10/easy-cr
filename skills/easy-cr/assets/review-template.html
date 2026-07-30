@@ -209,9 +209,8 @@ body.semantic-enabled .code-identifier:hover { color:var(--primary); text-decora
 .inline-editor { margin-top:7px }
 .inline-editor textarea { min-height:62px }
 .explain-box { min-width:600px; margin:7px 12px 9px 88px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text); white-space:normal; font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; overflow:hidden }
-.explain-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; border-bottom:1px solid var(--border); background:var(--surface-soft); font-size:12px; font-weight:800 }
-.explain-actions { display:flex; gap:4px }
-.explain-actions button { padding:2px 7px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--muted); cursor:pointer; font-size:11px }
+.explain-head { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid var(--border); background:var(--surface-soft); font-size:12px; font-weight:800 }
+.explain-toggle { width:22px; height:22px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--primary); cursor:pointer; line-height:1 }
 .explain-body { margin:0; max-height:280px; overflow:auto; padding:10px; color:var(--muted); white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace }
 .explain-box.collapsed .explain-body { display:none }
 ::highlight(review-comments) { background:var(--comment-soft); color:var(--text) }
@@ -1237,14 +1236,15 @@ function createExplanationBox(draft) {
   const endLine = draft.lines[draft.end];
   const box = document.createElement('div');
   box.className = 'explain-box';
-  box.innerHTML = `<div class="explain-head"><span>AI 解释</span><div class="explain-actions"><button type="button" data-action="toggle">收起</button><button type="button" data-action="close">关闭</button></div></div><pre class="explain-body"></pre>`;
+  box.innerHTML = `<div class="explain-head"><button class="explain-toggle" type="button" aria-expanded="true" title="展开/收起">▾</button><span>AI 解释</span></div><pre class="explain-body"></pre>`;
   const body = box.querySelector('.explain-body');
-  const toggle = box.querySelector('[data-action="toggle"]');
+  const toggle = box.querySelector('.explain-toggle');
   toggle.addEventListener('click', () => {
     box.classList.toggle('collapsed');
-    toggle.textContent = box.classList.contains('collapsed') ? '展开' : '收起';
+    const expanded = !box.classList.contains('collapsed');
+    toggle.textContent = expanded ? '▾' : '▸';
+    toggle.setAttribute('aria-expanded', String(expanded));
   });
-  box.querySelector('[data-action="close"]').addEventListener('click', closeExplanation);
   endLine.insertAdjacentElement('afterend', box);
   activeExplainBox = box;
   return body;

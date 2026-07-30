@@ -99,7 +99,7 @@ The base HTML always supports:
 - Dark/light themes.
 - Document, chapter, selected-text and line comments.
 - Left-selection highlights exact repeated text on the current page; right-click exposes comment and AI explanation actions, including selections that cross the line-number gutter.
-- Selected-code AI explanations stream into an inline box below the code and can be collapsed or closed.
+- Selected-code AI explanations stream into an inline box below the code; the left caret toggles collapse state and there is no close action.
 - Comment edit, delete, reply, resolve, summary popover and copy.
 - Persistence into the current HTML through the single local Easy CR helper, with a local pending draft while the service is unavailable.
 - No reviewed-copy export and no browser file picker.
