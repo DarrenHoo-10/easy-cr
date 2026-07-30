@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import io
 import json
 import os
 import re
@@ -82,6 +84,7 @@ class PluginManifestTest(unittest.TestCase):
         self.assertIn("do not change code yet", skill)
         self.assertIn("Present every such item together", skill)
         self.assertIn("--resolve-batch <batch-id>", skill)
+        self.assertIn("--reply \"处理结果", skill)
         self.assertIn("未处理 → 处理中 → 已解决", skill)
         self.assertNotIn("Use “补充其他改动”", skill)
 
@@ -439,7 +442,9 @@ class TemplateContractTest(unittest.TestCase):
         self.assertIn("helperRequest('/api/comments/write'", template)
         self.assertIn("helperRequest('/api/comments/read'", template)
         self.assertIn("helperRequest('/api/reviews/complete'", template)
+        self.assertIn("/api/explain", template)
         self.assertIn('id="complete-review"', template)
+        self.assertIn('id="step-sidebar-title"', template)
         self.assertNotIn("showOpenFilePicker", template)
         self.assertNotIn("createWritable", template)
         self.assertNotIn("exportReviewedCopy", template)
@@ -448,8 +453,119 @@ class TemplateContractTest(unittest.TestCase):
         self.assertIn(review_comments.COMMENTS_END, template)
         self.assertNotIn("评论将自动写入当前 HTML", template)
         self.assertNotIn("评论已写入 HTML", template)
+        self.assertNotIn("评论尚未写入 HTML", template)
+        self.assertNotIn("正在把待写入草稿保存到 HTML", template)
         self.assertIn("inline-comment-composer", template)
         self.assertIn("inlineAfter", template)
+        self.assertIn("commentDraftPrefix", template)
+        self.assertIn("composerHasDraft", template)
+        self.assertIn("selection-text-match", template)
+        self.assertIn("highlightPageTextMatches", template)
+        self.assertIn('data-action="explain"', template)
+        self.assertIn('data-action="task"', template)
+        self.assertIn('data-action="comment"', template)
+        self.assertIn("openTextComment", template)
+        self.assertIn("captured.kind !== 'code'", template)
+        self.assertIn("captured.kind !== 'qa'", template)
+        self.assertIn(
+            """selectionMenu.querySelector('[data-action="explain"]').classList.toggle('hidden', captured.kind !== 'code')""",
+            template,
+        )
+        self.assertIn("pendingTextSelection.kind === 'code'", template)
+        self.assertIn("pendingTextSelection.kind === 'qa'", template)
+        self.assertIn("annotation?.target?.targetType === 'qa'", template)
+        self.assertIn("添加到任务", template)
+        self.assertIn('id="task-composer"', template)
+        self.assertIn('placeholder="添加可选评论…"', template)
+        self.assertNotIn('id="task-annotation-list"', template)
+        self.assertNotIn('id="task-send"', template)
+        self.assertIn("taskDraftStorageKey", template)
+        self.assertIn("addTaskAnnotation", template)
+        self.assertIn("editTaskAnnotation", template)
+        self.assertIn("saveTaskAnnotation", template)
+        self.assertIn("cancelTaskAnnotation", template)
+        self.assertIn("renderTaskAnnotations", template)
+        self.assertIn("::highlight(task-annotations)", template)
+        self.assertIn("captureExplanationSelection", template)
+        self.assertIn("selectedTaskTarget", template)
+        self.assertIn("data-code-qa-location", template)
+        self.assertNotIn("askAboutExplanationSelection", template)
+        self.assertNotIn("/api/tasks/send", template)
+        self.assertIn("taskQuestion(prompt, annotations)", template)
+        self.assertIn("taskAnnotationsForLocation(locationKey)", template)
+        self.assertIn("clearTaskAnnotationsForLocation(locationKey)", template)
+        self.assertIn("runExplanationTurn", template)
+        self.assertIn("taskQuestion(rawQuestion, annotations)", template)
+        self.assertNotIn("sendTaskDraft", template)
+        self.assertIn("taskPrompt.addEventListener('keydown'", template)
+        task_keydown = template.split(
+            "taskPrompt.addEventListener('keydown'", 1
+        )[1].split("});", 1)[0]
+        self.assertIn("saveTaskAnnotation()", task_keydown)
+        self.assertIn("cancelTaskAnnotation()", task_keydown)
+        self.assertNotIn("task-composer-hint", template)
+        self.assertNotIn("task-voice", template)
+        self.assertIn("document.body.appendChild(pin)", template)
+        self.assertIn("pin.style.left = `${rect.right + window.scrollX}px`", template)
+        self.assertIn("pin.addEventListener('click', () => editTaskAnnotation(annotation))", template)
+        self.assertIn("function positionTaskComposer(rect)", template)
+        self.assertIn("let left = rect.right + scrollLeft + gap", template)
+        self.assertIn(".task-composer { position:absolute;", template)
+        self.assertIn("background:#1677ff", template)
+        self.assertIn("width:20px; height:20px", template)
+        self.assertIn(".task-annotation-pin span", template)
+        self.assertIn(".task-annotation-pin::before,.task-annotation-pin::after", template)
+        self.assertIn("border-radius:50%", template)
+        self.assertNotIn("rotate(-45deg)", template)
+        self.assertIn(".task-annotation-summary:hover .task-annotation-preview", template)
+        self.assertIn("所选文本：", template)
+        self.assertIn("用户评论：", template)
+        self.assertIn("清空本处注释", template)
+        self.assertIn("explain-annotation-count", template)
+        self.assertIn("displayQuestion:rawQuestion || '请处理这些注释'", template)
+        self.assertIn("annotationCount:annotations.length", template)
+        self.assertIn("retry.textContent = '重新发送'", template)
+        self.assertNotIn("restoreTaskAnnotations", template)
+        clear_index = template.index("clearTaskAnnotationsForLocation(locationKey);")
+        request_index = template.index("await runExplanationTurn({", clear_index)
+        self.assertLess(clear_index, request_index)
+        self.assertIn("overlapsSelection", template)
+        self.assertIn("if (!overlapsSelection) matches.push", template)
+        self.assertIn("function matchOverlapsCapturedSelection", template)
+        self.assertIn("highlightPageTextMatches(captured.quote, captured)", template)
+        self.assertIn("pendingTextSelection = null;", template)
+        self.assertIn("explainTextSelection", template)
+        self.assertIn("不懂就问", template)
+        self.assertIn("针对这段代码问 AI", template)
+        self.assertIn("history:priorHistory", template)
+        self.assertIn("codeQaStorageKey", template)
+        self.assertIn("sessionStorage.setItem(codeQaStorageKey", template)
+        self.assertIn("restoreCodeQa()", template)
+        self.assertIn("function codeQaLocationKey(target)", template)
+        self.assertIn("function readCodeQaStore()", template)
+        self.assertIn("threads:{[locationKey]:value}", template)
+        self.assertIn("readCodeQaState(locationKey)", template)
+        self.assertIn("store.threads[locationKey] = value", template)
+        self.assertIn("explain-waiting", template)
+        self.assertIn("appendChunk(decoder.decode", template)
+        self.assertIn("insertCodeAffordance(endLine, box, 0)", template)
+        self.assertIn("insertCodeAffordance(inlineAfter, composer, 1)", template)
+        self.assertIn("insertCodeAffordance(targetLine, view, 2)", template)
+        self.assertIn(".line.explain-target", template)
+        self.assertIn(".line.explain-target > span", template)
+        self.assertIn(".line.explain-target-start > span", template)
+        self.assertIn(".line.explain-target-end > span", template)
+        self.assertIn("setExplanationTargetHighlight(expanded)", template)
+        self.assertIn("setExplanationTargetHighlight(!state.collapsed)", template)
+        self.assertIn("activeExplainLines = draft.lines.slice", template)
+        self.assertNotIn("localStorage.setItem(codeQaStorageKey", template)
+        self.assertIn("class=\"explain-toggle\"", template)
+        self.assertIn("aria-expanded", template)
+        self.assertNotIn("data-action=\"close\"", template)
+        self.assertNotIn(">关闭</button></div></div><pre class=\"explain-body\"", template)
+        self.assertNotIn(">收起</button><button", template)
+        self.assertIn("applyGuidedDisplayMode", template)
+        self.assertIn("peer-step-change", template)
         self.assertIn("values.forEach(comment => {", template)
         self.assertNotIn("values.slice(0, 4).forEach(comment => {", template)
         self.assertIn("main.className = 'mini-comment-main'", template)
@@ -463,6 +579,7 @@ class TemplateContractTest(unittest.TestCase):
         )
         self.assertNotIn("/api/ai", template)
         self.assertNotIn("fetchExplanation", template)
+        self.assertNotIn("showSelectionMenu(captured.rect)", template)
 
     def test_report_chrome_uses_single_navy_accent_and_home_button(self):
         template = TEMPLATE_PATH.read_text()
@@ -478,23 +595,76 @@ class TemplateContractTest(unittest.TestCase):
         self.assertIn(".metric.minus {", template)
         self.assertIn(".line.add .line-no", template)
         self.assertIn(".line.del .line-no", template)
+        self.assertIn('aria-label="代码颜色说明"', template)
+        self.assertIn("新增代码", template)
+        self.assertIn("评论后修改", template)
+        self.assertIn("删除代码", template)
+        self.assertIn("其他步骤改动", template)
+        self.assertIn('legend-swatch comment"></i>评论位置', template)
+        self.assertNotIn("CR 范围：@@SCOPE@@", template)
         self.assertIn('id="home-button"', template)
         self.assertIn("homeButton.addEventListener('click'", template)
         self.assertNotIn('<div class="boundary">', template)
         self.assertNotIn(".chapter-row.active", template)
 
-    def test_guided_interactions_highlight_references_and_locate_comments(self):
+    def test_default_report_output_uses_date_and_subject_directory(self):
+        name = build_review.artifact_directory_name(
+            ' 任务回显 / 自动提交：方案? ',
+            today=build_review.date(2026, 7, 30),
+        )
+
+        self.assertEqual(name, "2026-07-30-任务回显-自动提交-方案")
+        self.assertEqual(
+            build_review.default_report_output(
+                Path("/repo"),
+                "任务回显与自动提交",
+            ).name,
+            "review.html",
+        )
+        self.assertEqual(
+            build_review.default_report_output(
+                Path("/repo"),
+                "任务回显与自动提交",
+            ).parent.parent,
+            Path("/repo/.codex-artifacts"),
+        )
+        self.assertEqual(
+            build_review.default_report_output(
+                Path("/repo"),
+                "任务回显与自动提交",
+                manifest_path=Path(
+                    "/repo/.codex-artifacts/2026-07-29-旧方案/manifest.json"
+                ),
+            ),
+            Path("/repo/.codex-artifacts/2026-07-29-旧方案/review.html"),
+        )
+
+        self.assertNotEqual(
+            build_review.artifact_directory_name(
+                "任务回显与自动提交",
+                today=build_review.date(2026, 7, 30),
+            ),
+            build_review.artifact_directory_name(
+                "账期优化",
+                today=build_review.date(2026, 7, 30),
+            ),
+        )
+
+    def test_guided_interactions_keep_editor_navigation_command_only(self):
         template = TEMPLATE_PATH.read_text()
 
         self.assertIn(".step-button.active .step-number", template)
         self.assertIn("semanticReferenceCache", template)
-        self.assertIn("scheduleSemanticHighlight", template)
-        self.assertIn("lockSemanticHighlight", template)
-        self.assertIn("clearSemanticHighlight", template)
+        self.assertNotIn("scheduleSemanticHighlight", template)
+        self.assertNotIn("lockSemanticHighlight", template)
+        self.assertNotIn("semantic-reference-match", template)
+        self.assertIn("&& event.metaKey", template)
         self.assertIn("chapterCommentsFilter", template)
         self.assertIn("scheduleCommentsPopoverOpen(count", template)
         self.assertIn("item.addEventListener('click', () => focusComment(comment))", template)
         self.assertIn("focusCommentElement", template)
+        self.assertIn("clearTextMatches", template)
+        self.assertIn("NodeFilter.SHOW_TEXT", template)
 
     def test_gutter_selection_uses_boundary_clamping(self):
         template = TEMPLATE_PATH.read_text()
@@ -873,12 +1043,16 @@ class CliTest(unittest.TestCase):
                 str(report),
                 "--resolve-batch",
                 "batch-1",
+                "--reply",
+                "处理结果：已补充失败分支。",
             ])
             updated = review_comments.extract_comments(report.read_text())
 
         self.assertEqual(result, 0)
         self.assertEqual(updated["revision"], 3)
         self.assertEqual(updated["comments"][0]["status"], "resolved")
+        self.assertEqual(updated["comments"][0]["replies"][0]["author"], "ai")
+        self.assertEqual(updated["comments"][0]["replies"][0]["body"], "处理结果：已补充失败分支。")
         self.assertEqual(updated["comments"][1]["status"], "processing")
 
     def test_init_installs_single_helper_service(self):
@@ -1127,6 +1301,34 @@ class BuildReviewTest(unittest.TestCase):
             output = root / "review.html"
             self.build(repo, manifest, output, config)
             self.assertNotIn("untracked.go", output.read_text())
+
+    def test_build_without_output_uses_review_subdirectory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            repo, manifest = self.make_repo(root)
+            payload = json.loads(manifest.read_text())
+            payload["subject"] = "任务回显 / 自动提交"
+            manifest.write_text(json.dumps(payload, ensure_ascii=False))
+            config = root / "config.json"
+            easy_cr_config.write_editor("none", config)
+
+            build_review.main([
+                "--repo", str(repo),
+                "--base", "HEAD^",
+                "--head", "HEAD",
+                "--manifest", str(manifest),
+                "--config-file", str(config),
+                "--token-file", str(root / "token"),
+            ])
+
+            output = (
+                repo
+                / ".codex-artifacts"
+                / build_review.artifact_directory_name(payload["subject"])
+                / "review.html"
+            )
+            self.assertTrue(output.is_file())
+            self.assertIn("任务回显 / 自动提交", output.read_text())
 
     def test_v2_manifest_renders_one_chapter_across_three_repositories(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -1490,6 +1692,52 @@ class BuildReviewTest(unittest.TestCase):
         self.assertTrue(migrated["comments"][0]["target"]["approximate"])
         self.assertNotEqual(migrated["reportId"], first_report_id)
 
+    def test_iteration_change_requires_sent_review_feedback(self):
+        previous_state = {
+            "files": {
+                "repo:service.go": {
+                    "added": [
+                        hashlib.sha256(
+                            b"+func Value() int { return 1 }"
+                        ).hexdigest(),
+                    ],
+                },
+            },
+        }
+        repository = build_review.RepositoryReview(
+            id="repo",
+            label="repo",
+            root=Path("/repo"),
+            base="base",
+            head="head",
+            context=10,
+            revision={
+                "headCommit": "a" * 40,
+                "reviewType": "revision",
+                "fingerprint": "b" * 40,
+            },
+            files=[
+                build_review.DiffFile(
+                    "service.go",
+                    lines=[
+                        build_review.DiffLine(
+                            "+func Value() int { return 2 }",
+                            "add",
+                            new_line=3,
+                        ),
+                    ],
+                ),
+            ],
+            subject="test",
+            author="test",
+            authored_at="test",
+        )
+        build_review.mark_iteration_changes([repository], None)
+        self.assertFalse(repository.files[0].lines[0].iteration_change)
+
+        build_review.mark_iteration_changes([repository], previous_state)
+        self.assertTrue(repository.files[0].lines[0].iteration_change)
+
 
 class ReviewCommentsTest(unittest.TestCase):
     def test_comment_parser_ignores_marker_literals_in_runtime_script(self):
@@ -1564,12 +1812,22 @@ class ReviewCommentsTest(unittest.TestCase):
             ],
         }
 
-        updated = review_comments.mark_batch_resolved(payload, "batch-1")
+        updated = review_comments.mark_batch_resolved(
+            payload,
+            "batch-1",
+            "处理结果：已调整实现。",
+        )
 
         self.assertEqual(updated["revision"], 5)
         self.assertEqual(updated["comments"][0]["status"], "resolved")
+        self.assertEqual(updated["comments"][0]["replies"][0]["author"], "ai")
+        self.assertEqual(
+            updated["comments"][0]["replies"][0]["body"],
+            "处理结果：已调整实现。",
+        )
         self.assertEqual(updated["comments"][1]["status"], "processing")
         self.assertEqual(updated["comments"][2]["status"], "pending")
+        self.assertEqual(updated["comments"][1].get("replies"), [])
 
 
 class HelperServiceTest(unittest.TestCase):
@@ -1682,6 +1940,270 @@ class HelperServiceTest(unittest.TestCase):
                     "repositoryRoots": [str(root / "repo")],
                     "agent": None,
                 })
+
+    def test_explain_selection_uses_bound_agent_without_mutating_comments(self):
+        captured: list[tuple[dict, Path, dict]] = []
+
+        def explain(agent: dict, report_path: Path, request: dict):
+            captured.append((agent, report_path, request))
+            return iter(["解释第一段", "，解释第二段"])
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            report = self.make_report(root)
+            store = easy_cr_helper.HelperStore(root / "config", explainer=explain)
+            registration = store.register_report({
+                "reportId": "report-1",
+                "path": str(report),
+                "repositoryRoots": [str(root / "repo")],
+                "agent": {
+                    "client": "codex",
+                    "sessionId": "session-1",
+                    "cwd": str(root / "repo"),
+                },
+                "subject": "帐期优化",
+            })
+
+            chunks = list(store.explain_selection(
+                "report-1",
+                registration["reportToken"],
+                {
+                    "selection": "if err != nil { return err }",
+                    "question": "为什么直接返回？",
+                    "history": [
+                        {"role": "user", "content": "这个函数做什么？"},
+                        {"role": "assistant", "content": "它处理请求。"},
+                    ],
+                    "target": {"repoId": "repo", "path": "service.go", "lineLabel": "+42"},
+                },
+            ))
+            embedded = review_comments.extract_comments(report.read_text())
+            with self.assertRaises(ValueError):
+                list(store.explain_selection(
+                    "report-1",
+                    registration["reportToken"],
+                    {"selection": "   ", "question": "为什么？"},
+                ))
+            with self.assertRaisesRegex(ValueError, "请输入"):
+                list(store.explain_selection(
+                    "report-1",
+                    registration["reportToken"],
+                    {"selection": "return nil", "question": "   "},
+                ))
+
+        self.assertEqual("".join(chunks), "解释第一段，解释第二段")
+        self.assertEqual(embedded["comments"], [])
+        self.assertEqual(captured[0][0]["reportSubject"], "帐期优化")
+        self.assertEqual(captured[0][1], report.resolve())
+        self.assertEqual(captured[0][2]["target"]["path"], "service.go")
+        self.assertEqual(captured[0][2]["question"], "为什么直接返回？")
+        self.assertEqual(captured[0][2]["history"][0]["role"], "user")
+
+    def test_explanation_session_is_reused_by_reports_in_same_plan_directory(self):
+        captured: list[dict] = []
+
+        def explain(agent: dict, _report_path: Path, request: dict):
+            captured.append({
+                "question": request["question"],
+                "sessionId": agent.get("explanationSessionId"),
+                "reviewKey": agent.get("reviewKey"),
+            })
+            if not agent.get("explanationSessionId"):
+                agent["explanationSessionId"] = "child-session"
+            return iter([request["question"]])
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            plan = root / "repo" / ".codex-artifacts" / "2026-07-30-帐期优化"
+            plan.mkdir(parents=True)
+            first_report = plan / "review.html"
+            second_report = plan / "review-regenerated.html"
+            first_report.write_text(
+                f"<html>{review_comments.empty_comments_block('report-1')}</html>"
+            )
+            second_report.write_text(
+                f"<html>{review_comments.empty_comments_block('report-2')}</html>"
+            )
+            store = easy_cr_helper.HelperStore(
+                root / "config",
+                explainer=explain,
+            )
+            common = {
+                "repositoryRoots": [str(root / "repo")],
+                "agent": {
+                    "client": "codex",
+                    "sessionId": "source-session",
+                    "cwd": str(root / "repo"),
+                },
+                "subject": "帐期优化",
+            }
+            first = store.register_report({
+                **common,
+                "reportId": "report-1",
+                "path": str(first_report),
+            })
+            second = store.register_report({
+                **common,
+                "reportId": "report-2",
+                "path": str(second_report),
+            })
+
+            list(store.explain_selection(
+                "report-1",
+                first["reportToken"],
+                {"selection": "a := 1", "question": "第一问"},
+            ))
+            list(store.explain_selection(
+                "report-2",
+                second["reportToken"],
+                {"selection": "return a", "question": "第二问"},
+            ))
+            registry = json.loads(store.registry_path.read_text())
+
+        self.assertEqual(captured[0]["sessionId"], "")
+        self.assertEqual(captured[1]["sessionId"], "child-session")
+        self.assertEqual(captured[0]["reviewKey"], captured[1]["reviewKey"])
+        self.assertEqual(len(registry["explanationSessions"]), 1)
+        session = next(iter(registry["explanationSessions"].values()))
+        self.assertEqual(session["sessionId"], "child-session")
+        self.assertEqual(session["sourceSessionId"], "source-session")
+
+    def test_explanation_requests_for_same_plan_are_fifo(self):
+        entered_first = threading.Event()
+        entered_second = threading.Event()
+        release_first = threading.Event()
+        events: list[str] = []
+
+        def explain(_agent: dict, _report_path: Path, request: dict):
+            question = request["question"]
+            events.append(f"start:{question}")
+            if question == "first":
+                entered_first.set()
+                release_first.wait(timeout=2)
+            else:
+                entered_second.set()
+            yield question
+            events.append(f"end:{question}")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            report = self.make_report(root)
+            store = easy_cr_helper.HelperStore(
+                root / "config",
+                explainer=explain,
+            )
+            registration = store.register_report({
+                "reportId": "report-1",
+                "path": str(report),
+                "repositoryRoots": [str(root / "repo")],
+                "agent": {
+                    "client": "codex",
+                    "sessionId": "source-session",
+                    "cwd": str(root / "repo"),
+                },
+            })
+
+            def ask(question: str) -> None:
+                list(store.explain_selection(
+                    "report-1",
+                    registration["reportToken"],
+                    {"selection": "return nil", "question": question},
+                ))
+
+            first = threading.Thread(target=ask, args=("first",))
+            second = threading.Thread(target=ask, args=("second",))
+            first.start()
+            self.assertTrue(entered_first.wait(timeout=1))
+            second.start()
+            self.assertFalse(entered_second.wait(timeout=0.1))
+            release_first.set()
+            first.join(timeout=2)
+            second.join(timeout=2)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(
+            events,
+            ["start:first", "end:first", "start:second", "end:second"],
+        )
+
+    def test_explanation_requests_for_different_plans_do_not_share_queue(self):
+        first_entered = threading.Event()
+        second_entered = threading.Event()
+        release = threading.Event()
+
+        def explain(_agent: dict, _report_path: Path, request: dict):
+            if request["question"] == "first":
+                first_entered.set()
+                release.wait(timeout=2)
+            else:
+                second_entered.set()
+            yield request["question"]
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            repo = root / "repo"
+            reports = []
+            for index in (1, 2):
+                plan = repo / ".codex-artifacts" / f"plan-{index}"
+                plan.mkdir(parents=True)
+                report = plan / "review.html"
+                report.write_text(
+                    f"<html>{review_comments.empty_comments_block(f'report-{index}')}</html>"
+                )
+                reports.append(report)
+            store = easy_cr_helper.HelperStore(
+                root / "config",
+                explainer=explain,
+            )
+            registrations = [
+                store.register_report({
+                    "reportId": f"report-{index}",
+                    "path": str(report),
+                    "repositoryRoots": [str(repo)],
+                    "agent": {
+                        "client": "codex",
+                        "sessionId": f"source-{index}",
+                        "cwd": str(repo),
+                    },
+                })
+                for index, report in enumerate(reports, 1)
+            ]
+
+            def ask(index: int, question: str) -> None:
+                list(store.explain_selection(
+                    f"report-{index}",
+                    registrations[index - 1]["reportToken"],
+                    {"selection": "return nil", "question": question},
+                ))
+
+            first = threading.Thread(target=ask, args=(1, "first"))
+            second = threading.Thread(target=ask, args=(2, "second"))
+            first.start()
+            self.assertTrue(first_entered.wait(timeout=1))
+            second.start()
+            self.assertTrue(second_entered.wait(timeout=1))
+            release.set()
+            first.join(timeout=2)
+            second.join(timeout=2)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+
+    def test_registry_without_explanation_sessions_migrates_on_load(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp)
+            config.mkdir(exist_ok=True)
+            registry_path = config / "helper-reports.json"
+            registry_path.write_text(json.dumps({
+                "version": 1,
+                "reports": {},
+            }))
+            store = easy_cr_helper.HelperStore(config)
+
+            loaded = store._load()
+
+        self.assertEqual(loaded["explanationSessions"], {})
 
     def test_send_comment_batch_marks_only_pending_comments_processing(self):
         launched: list[tuple[dict, Path]] = []
@@ -1909,6 +2431,183 @@ class HelperServiceTest(unittest.TestCase):
             ),
         )
         self.assertIn(str(report), claude[-1])
+
+    def test_explanation_command_is_read_only_and_ephemeral(self):
+        report = Path("/repo/.codex-artifacts/review.html")
+        prompt = easy_cr_helper.explanation_prompt(
+            "帐期优化",
+            "if err != nil { return err }",
+            {"repoId": "repo", "path": "service.go", "lineLabel": "+42"},
+            "这个错误为什么直接返回？",
+            [
+                {"role": "user", "content": "这个函数做什么？"},
+                {"role": "assistant", "content": "它负责确认方案。"},
+            ],
+        )
+        codex = easy_cr_helper.explanation_command(
+            {"client": "codex", "cwd": "/repo"},
+            report,
+            prompt,
+            codex_command=Path("/Applications/Codex"),
+        )
+
+        self.assertEqual(codex[:3], ["/Applications/Codex", "exec", "--ephemeral"])
+        self.assertIn("--sandbox", codex)
+        self.assertIn("read-only", codex)
+        self.assertIn("--json", codex)
+        self.assertNotIn("--ask-for-approval", codex)
+        self.assertEqual(codex[-1], prompt)
+        self.assertIn("不要修改任何文件", prompt)
+        self.assertIn("本次问题：这个错误为什么直接返回？", prompt)
+        self.assertIn("此前问答", prompt)
+
+    def test_claude_explanation_command_forks_once_then_resumes_child(self):
+        report = Path("/repo/.codex-artifacts/plan/review.html")
+        agent = {
+            "client": "claude",
+            "cwd": "/repo",
+            "sourceSessionId": "source-session",
+        }
+        with mock.patch.object(
+            easy_cr_helper.uuid,
+            "uuid4",
+            return_value="11111111-1111-4111-8111-111111111111",
+        ):
+            first = easy_cr_helper.explanation_command(
+                agent,
+                report,
+                "first",
+                claude_command=Path("/usr/local/bin/claude"),
+            )
+        second = easy_cr_helper.explanation_command(
+            agent,
+            report,
+            "second",
+            claude_command=Path("/usr/local/bin/claude"),
+        )
+
+        self.assertEqual(
+            first[:7],
+            [
+                "/usr/local/bin/claude",
+                "--resume",
+                "source-session",
+                "--fork-session",
+                "--session-id",
+                "11111111-1111-4111-8111-111111111111",
+                "--print",
+            ],
+        )
+        self.assertEqual(
+            second[:4],
+            [
+                "/usr/local/bin/claude",
+                "--resume",
+                "11111111-1111-4111-8111-111111111111",
+                "--print",
+            ],
+        )
+
+    def test_default_explainer_streams_only_codex_answer(self):
+        class FakeProcess:
+            stdout = io.StringIO("".join([
+                '{"id":1,"result":{"userAgent":"test"}}\n',
+                '{"method":"thread/started","params":{"thread":{"id":"ignored"}}}\n',
+                '{"id":2,"result":{"thread":{"id":"thread-1"}}}\n',
+                '{"id":3,"result":{"turn":{"id":"turn-1"}}}\n',
+                '{"method":"item/agentMessage/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","delta":"这是"}}\n',
+                '{"method":"item/agentMessage/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","delta":"回答。"}}\n',
+                '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}}\n',
+            ]))
+            stdin = mock.Mock()
+
+            @staticmethod
+            def wait(timeout: int) -> int:
+                return 0
+
+            @staticmethod
+            def poll() -> int:
+                return 0
+
+            @staticmethod
+            def kill() -> None:
+                raise AssertionError("successful process must not be killed")
+
+        request = {
+            "selection": "return nil",
+            "question": "为什么返回 nil？",
+            "history": [],
+            "target": {"path": "service.go", "lineLabel": "+42"},
+        }
+        with mock.patch.object(
+            easy_cr_helper.subprocess,
+            "Popen",
+            return_value=FakeProcess(),
+        ):
+            chunks = list(easy_cr_helper._default_explainer(
+                {
+                    "client": "codex",
+                    "cwd": "/repo",
+                    "sessionId": "source-thread",
+                    "reportSubject": "帐期优化",
+                },
+                Path("/repo/.codex-artifacts/review.html"),
+                request,
+            ))
+
+        self.assertEqual(chunks, ["这是", "回答。"])
+        written = "".join(
+            call.args[0] for call in FakeProcess.stdin.write.call_args_list
+        )
+        self.assertIn('"method": "thread/fork"', written)
+        self.assertIn('"threadId": "source-thread"', written)
+        self.assertIn('"ephemeral": false', written)
+        self.assertIn('"sandbox": "read-only"', written)
+        self.assertIn('"method": "turn/start"', written)
+
+    def test_codex_app_server_resumes_existing_explanation_session(self):
+        class FakeProcess:
+            stdout = io.StringIO("".join([
+                '{"id":1,"result":{"userAgent":"test"}}\n',
+                '{"id":2,"result":{"thread":{"id":"child-thread"}}}\n',
+                '{"id":3,"result":{"turn":{"id":"turn-2"}}}\n',
+                '{"method":"item/agentMessage/delta","params":{"threadId":"child-thread","turnId":"turn-2","itemId":"item-2","delta":"继续回答"}}\n',
+                '{"method":"turn/completed","params":{"threadId":"child-thread","turn":{"id":"turn-2","status":"completed"}}}\n',
+            ]))
+            stdin = mock.Mock()
+
+            @staticmethod
+            def poll() -> int:
+                return 0
+
+            @staticmethod
+            def kill() -> None:
+                raise AssertionError("successful process must not be killed")
+
+        agent = {
+            "client": "codex",
+            "cwd": "/repo",
+            "sourceSessionId": "source-thread",
+            "explanationSessionId": "child-thread",
+        }
+        with mock.patch.object(
+            easy_cr_helper.subprocess,
+            "Popen",
+            return_value=FakeProcess(),
+        ):
+            chunks = list(easy_cr_helper._codex_app_server_explainer(
+                agent,
+                Path("/repo/.codex-artifacts/plan/review.html"),
+                "follow up",
+            ))
+
+        self.assertEqual(chunks, ["继续回答"])
+        written = "".join(
+            call.args[0] for call in FakeProcess.stdin.write.call_args_list
+        )
+        self.assertIn('"method": "thread/resume"', written)
+        self.assertIn('"threadId": "child-thread"', written)
+        self.assertNotIn('"method": "thread/fork"', written)
 
     def test_codex_native_ipc_starts_turn_in_bound_desktop_thread(self):
         session_id = "019f88f5-e5d7-7ff1-bac3-7c46ab1fd365"

@@ -8,16 +8,20 @@
 :root {
   --bg:#f5f0e8; --surface:#fffcf7; --surface-soft:#f1ece4; --surface-strong:#e7e0d5;
   --text:#22262c; --muted:#716e68; --border:#ded6c9; --primary:#1f3a5f;
-  --primary-soft:#e8edf2; --success:#2e6e55; --success-soft:#e3f2e9;
+  --primary-soft:#e8edf2; --explain-code:#eaf4ff; --explain-border:#9fc4e8; --success:#2e6e55; --success-soft:#e3f2e9;
+  --iteration-change:#b7d8c2; --iteration-change-text:#174d35; --iteration-change-rail:#1f6b45;
   --danger:#a94b45; --danger-soft:#f8e7e5; --comment:#8a6a10; --comment-soft:#fff4c2;
+  --task-annotation:#b9dcff; --task-annotation-border:#4b7fb5; --task-pin:#1f3a5f;
   --gutter:#f3eee7; --shadow:0 14px 34px rgba(43,47,52,.12);
   color-scheme:light;
 }
 :root[data-theme="dark"] {
   --bg:#171a1f; --surface:#20242a; --surface-soft:#292d34; --surface-strong:#333842;
   --text:#f3efe7; --muted:#b3ada3; --border:#45413b; --primary:#9eb2c8;
-  --primary-soft:#273747; --success:#9cc9ad; --success-soft:#1f382c;
+  --primary-soft:#273747; --explain-code:#22344a; --explain-border:#5f83aa; --success:#9cc9ad; --success-soft:#1f382c;
+  --iteration-change:#275b45; --iteration-change-text:#edf8f1; --iteration-change-rail:#72b18e;
   --danger:#e3a09a; --danger-soft:#442b2b; --comment:#f2d77a; --comment-soft:#4a4021;
+  --task-annotation:#294f78; --task-annotation-border:#9eb2c8; --task-pin:#1f3a5f;
   --gutter:#1c2025; --shadow:0 18px 42px rgba(0,0,0,.34);
   color-scheme:dark;
 }
@@ -34,7 +38,16 @@ button { color:inherit }
 .brand-mark { display:grid; place-items:center; width:30px; height:30px; border-radius:8px; color:#fff; background:var(--primary); font-size:15px }
 .report-heading { min-width:0; flex:1 }
 .report-heading h1 { margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:18px; line-height:24px }
-.report-heading p { margin:2px 0 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:11px }
+.report-subline { display:flex; align-items:center; gap:10px; min-width:0; margin-top:2px; color:var(--muted); font-size:11px }
+.report-meta { flex:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.diff-legend { display:flex; align-items:center; gap:8px; min-width:0; white-space:nowrap }
+.legend-item { display:inline-flex; align-items:center; gap:4px }
+.legend-swatch { width:11px; height:11px; border:1px solid var(--border); border-radius:3px }
+.legend-swatch.add { border-color:color-mix(in srgb,var(--success) 28%,var(--border)); background:var(--success-soft) }
+.legend-swatch.iteration { border-color:var(--iteration-change-rail); background:var(--iteration-change) }
+.legend-swatch.del { border-color:color-mix(in srgb,var(--danger) 28%,var(--border)); background:var(--danger-soft) }
+.legend-swatch.peer { background:var(--surface-strong) }
+.legend-swatch.comment { border-color:var(--comment); background:var(--comment-soft) }
 .top-actions { flex:none; display:flex; align-items:center; gap:7px }
 .metric,.action { min-height:34px; padding:7px 10px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--muted); font-size:12px }
 .metric b { color:var(--text); margin-right:3px }
@@ -145,19 +158,22 @@ button { color:inherit }
 .line-no:hover { color:var(--text); background:var(--primary-soft) }
 .line.add { background:var(--success-soft); color:var(--success) }
 .line.del { background:var(--danger-soft); color:var(--danger) }
-.line.add.iteration-change { background:#2e6e55; color:#fff }
+.line.add.iteration-change { background:var(--iteration-change); color:var(--iteration-change-text); box-shadow:inset 4px 0 var(--iteration-change-rail) }
+.line.peer-step-change { color:var(--muted) !important; background:var(--surface-soft) !important }
 .line.add .line-no { color:var(--success); background:var(--success-soft) }
 .line.del .line-no { color:var(--danger); background:var(--danger-soft) }
-.line.add.iteration-change .line-no { color:#fff; background:#2e6e55 }
+.line.add.iteration-change .line-no { color:var(--iteration-change-text); background:var(--iteration-change) }
+.line.peer-step-change .line-no { color:var(--muted) !important; background:var(--surface-soft) !important }
 .line.hunk { margin:5px 0; background:var(--primary-soft); color:var(--primary) }
 .line.meta { color:var(--muted) }
 .line.selected,.line.comment-target { box-shadow:inset 3px 0 var(--comment); background:var(--comment-soft) !important }
+.line.explain-target { background:transparent !important }
+.line.explain-target > span { border-left:2px solid var(--explain-border); border-right:1px solid var(--explain-border); background:var(--explain-code) }
+.line.explain-target-start > span { border-top:1px solid var(--explain-border) }
+.line.explain-target-end > span { border-bottom:1px solid var(--explain-border) }
 .line.context-collapsed { color:var(--muted); background:var(--surface-soft) }
+.selection-text-match { border:1px solid var(--danger); border-radius:3px; background:color-mix(in srgb,var(--danger-soft) 56%,transparent); box-shadow:0 0 0 1px color-mix(in srgb,var(--danger) 20%,transparent) }
 .code-identifier { border-radius:2px }
-body.semantic-enabled .code-identifier { cursor:pointer }
-body.semantic-enabled .code-identifier:hover { color:var(--primary); text-decoration:underline }
-.code-identifier.semantic-reference-match { color:var(--primary); background:var(--primary-soft); box-shadow:0 0 0 1px color-mix(in srgb,var(--primary) 38%,transparent) }
-.code-identifier.semantic-reference-origin { text-decoration:underline; text-decoration-thickness:2px }
 .full-diff-shell { display:grid; grid-template-columns:300px minmax(0,1fr) }
 .full-sidebar { position:sticky; top:72px; height:calc(100vh - 72px); overflow:auto; padding:14px; border-right:1px solid var(--border); background:var(--surface) }
 .full-sidebar h2 { margin:7px 4px 12px; font-size:16px }
@@ -183,8 +199,8 @@ body.semantic-enabled .code-identifier:hover { color:var(--primary); text-decora
 /* Comments and popovers */
 .selection-menu { display:none; position:fixed; z-index:100; padding:5px; border:1px solid var(--border); border-radius:8px; background:var(--surface); box-shadow:var(--shadow) }
 .selection-menu.visible { display:block }
-.selection-menu button { padding:7px 11px; border:0; border-radius:5px; color:var(--comment); background:transparent; cursor:pointer; font-weight:700 }
-.selection-menu button:hover { background:var(--comment-soft) }
+.selection-menu button { padding:7px 11px; border:0; border-radius:5px; color:var(--primary); background:transparent; cursor:pointer; font-weight:700 }
+.selection-menu button:hover { background:var(--primary-soft) }
 .comment-composer { z-index:115; width:min(410px,calc(100vw - 24px)); padding:13px; border:1px solid var(--border); border-radius:11px; background:var(--surface); box-shadow:var(--shadow); white-space:normal; font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif }
 .comment-composer.floating-comment-composer { position:fixed }
 .comment-composer.inline-comment-composer { width:auto; min-width:600px; margin:7px 12px 9px 88px; background:var(--comment-soft); box-shadow:none }
@@ -205,7 +221,60 @@ body.semantic-enabled .code-identifier:hover { color:var(--primary); text-decora
 .reply { padding:7px 9px }
 .inline-editor { margin-top:7px }
 .inline-editor textarea { min-height:62px }
+.explain-box { min-width:600px; margin:7px 12px 9px 88px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text); white-space:normal; font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; overflow:hidden }
+.explain-head { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid var(--border); background:var(--surface-soft); font-size:12px; font-weight:800 }
+.explain-toggle { width:22px; height:22px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--primary); cursor:pointer; line-height:1 }
+.explain-content { display:flex; flex-direction:column; min-height:120px }
+.explain-thread { max-height:360px; overflow:auto; padding:10px }
+.explain-empty { padding:18px 10px; color:var(--muted); text-align:center; font-size:12px }
+.explain-message { width:fit-content; max-width:88%; margin-bottom:9px; padding:8px 10px; border-radius:8px; white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace }
+.explain-message.user { margin-left:auto; color:var(--text); background:var(--primary-soft) }
+.explain-message.user.has-annotations { display:flex; flex-direction:column; align-items:flex-end; gap:8px; padding:0; background:transparent }
+.explain-annotation-count { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid var(--border); border-radius:18px; color:var(--text); background:var(--surface); font:700 11px/1.2 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif }
+.explain-annotation-count::before { content:"▱"; color:var(--muted); font-size:13px }
+.explain-message-body { max-width:100%; padding:8px 10px; border-radius:8px; color:var(--text); background:var(--primary-soft); white-space:pre-wrap; overflow-wrap:anywhere }
+.explain-message.assistant { color:var(--muted); background:var(--surface-soft) }
+.explain-message.error { color:var(--danger); background:var(--danger-soft) }
+.explain-retry { display:block; margin-top:7px; padding:4px 8px; border:1px solid currentColor; border-radius:12px; color:inherit; background:transparent; cursor:pointer; font:700 10px/1.2 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif }
+.explain-waiting { display:inline-flex; align-items:center; gap:3px; margin-left:6px }
+.explain-waiting i { width:4px; height:4px; border-radius:50%; background:currentColor; animation:explain-waiting 1s ease-in-out infinite }
+.explain-waiting i:nth-child(2) { animation-delay:.14s }
+.explain-waiting i:nth-child(3) { animation-delay:.28s }
+@keyframes explain-waiting {
+  0%,60%,100% { opacity:.3; transform:translateY(0) }
+  30% { opacity:1; transform:translateY(-3px) }
+}
+.explain-composer { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; padding:10px; border-top:1px solid var(--border); background:var(--surface) }
+.explain-composer textarea { min-height:54px; max-height:150px; resize:vertical; padding:8px 9px; border:1px solid var(--border); border-radius:7px; outline:none; color:var(--text); background:var(--bg) }
+.explain-composer textarea:focus { border-color:var(--primary) }
+.explain-send { align-self:end; min-width:62px; padding:7px 10px; border:1px solid var(--primary); border-radius:7px; color:#fff; background:var(--primary); cursor:pointer }
+.explain-send:disabled { cursor:not-allowed; opacity:.55 }
+.explain-hint { grid-column:1/-1; color:var(--muted); font-size:10px }
+.explain-box.collapsed .explain-content { display:none }
 ::highlight(review-comments) { background:var(--comment-soft); color:var(--text) }
+::highlight(task-annotations) { background:var(--task-annotation); color:var(--text) }
+.task-annotation-pin { position:absolute; z-index:106; display:grid; place-items:center; width:20px; height:20px; transform:translate(-28%,-72%); border:1px solid var(--surface); border-radius:50%; color:#fff; background:#1677ff; box-shadow:0 2px 5px rgba(22,119,255,.25); cursor:pointer; animation:task-pin-pop .18s ease-out }
+.task-annotation-pin::before,.task-annotation-pin::after { content:""; position:absolute; pointer-events:none; clip-path:polygon(0 0,100% 0,28% 100%) }
+.task-annotation-pin::before { left:0; bottom:-4px; width:8px; height:7px; background:var(--surface) }
+.task-annotation-pin::after { left:2px; bottom:-2px; width:5px; height:4px; background:#1677ff }
+.task-annotation-pin span { position:relative; z-index:1; font:800 9px/1 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif }
+.task-annotation-pin:hover { background:#0f66db }
+@keyframes task-pin-pop { from { opacity:0; transform:translate(-28%,-52%) scale(.8) } to { opacity:1; transform:translate(-28%,-72%) scale(1) } }
+.task-composer { position:absolute; z-index:105; width:min(500px,calc(100vw - 36px)); padding:6px; border:1px solid var(--border); border-radius:30px; background:var(--surface); box-shadow:0 12px 30px rgba(31,58,95,.16) }
+.task-composer textarea { display:block; width:100%; min-height:44px; max-height:120px; resize:none; padding:10px 16px; border:0; border-radius:24px; outline:0; color:var(--text); background:transparent; line-height:1.55 }
+.task-composer textarea::placeholder { color:color-mix(in srgb,var(--muted) 48%,transparent) }
+.task-annotation-summary { position:relative; grid-column:1/-1; justify-self:start }
+.task-annotation-chip { display:inline-flex; align-items:center; gap:6px; padding:5px 8px; border:1px solid var(--border); border-radius:18px; color:var(--text); background:var(--surface); font-weight:700; cursor:default }
+.task-annotation-clear { display:grid; place-items:center; width:22px; height:22px; padding:0; border:0; border-radius:50%; color:var(--muted); background:var(--surface-soft); cursor:pointer; font-size:16px; line-height:1 }
+.task-annotation-clear:hover { color:var(--danger); background:var(--danger-soft) }
+.task-annotation-preview { display:none; position:absolute; z-index:112; left:0; bottom:calc(100% + 8px); width:min(480px,calc(100vw - 36px)); max-height:360px; overflow:auto; padding:12px; border:1px solid var(--border); border-radius:14px; color:var(--text); background:var(--surface); box-shadow:var(--shadow) }
+.task-annotation-summary:hover .task-annotation-preview,.task-annotation-summary:focus-within .task-annotation-preview { display:block }
+.task-preview-item { display:grid; grid-template-columns:24px minmax(0,1fr); gap:7px 10px; padding:9px 0; border-bottom:1px solid var(--border) }
+.task-preview-item:last-child { border-bottom:0 }
+.task-preview-number { color:var(--muted); font-weight:700 }
+.task-preview-label { color:var(--muted); font-size:11px }
+.task-preview-value { margin-bottom:7px; white-space:pre-wrap; overflow-wrap:anywhere }
+.task-preview-value:last-child { margin-bottom:0; color:var(--text); font-weight:600 }
 .comments-popover,.reference-popover { display:none; position:fixed; z-index:120; width:min(440px,calc(100vw - 24px)); max-height:min(620px,calc(100vh - 48px)); border:1px solid var(--border); border-radius:12px; background:var(--surface); box-shadow:var(--shadow); overflow:hidden }
 .comments-popover.visible,.reference-popover.visible { display:flex; flex-direction:column }
 .popover-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 14px; border-bottom:1px solid var(--border) }
@@ -234,6 +303,7 @@ body.semantic-enabled .code-identifier:hover { color:var(--primary); text-decora
 @media(max-width:900px) {
   .topbar { position:relative; flex-wrap:wrap; padding:10px 14px }
   .report-heading { order:3; flex-basis:100% }
+  .report-subline,.diff-legend { flex-wrap:wrap; white-space:normal }
   .top-actions { margin-left:auto }
   .overview-shell,.full-diff-shell,.guided-shell { display:block }
   .chapter-sidebar,.full-sidebar,.step-sidebar { position:relative; top:0; width:100%; height:auto; border-right:0; border-bottom:1px solid var(--border) }
@@ -244,7 +314,8 @@ body.semantic-enabled .code-identifier:hover { color:var(--primary); text-decora
   .guided-footer .previous,.guided-footer .next { min-width:0 }
   .guided-progress { order:-1; flex-basis:100% }
   .save-state { position:static; margin:10px 14px }
-  .inline-comment,.comment-composer.inline-comment-composer { min-width:0; margin-left:12px }
+  .inline-comment,.comment-composer.inline-comment-composer,.explain-box { min-width:0; margin-left:12px }
+  .task-composer { width:calc(100vw - 24px) }
 }
 @media(prefers-reduced-motion:reduce) {
   html { scroll-behavior:auto }
@@ -257,7 +328,16 @@ body.semantic-enabled .code-identifier:hover { color:var(--primary); text-decora
   <button class="brand" id="home-button" type="button" aria-label="返回报告首页"><span class="brand-mark">CR</span><span>Easy CR</span></button>
   <div class="report-heading">
     <h1>@@SUBJECT@@</h1>
-    <p>@@SUBTITLE@@ · CR 范围：@@SCOPE@@</p>
+    <div class="report-subline">
+      <span class="report-meta">@@SUBTITLE@@</span>
+      <span class="diff-legend" aria-label="代码颜色说明">
+        <span class="legend-item"><i class="legend-swatch add"></i>新增代码</span>
+        <span class="legend-item"><i class="legend-swatch iteration"></i>评论后修改</span>
+        <span class="legend-item"><i class="legend-swatch del"></i>删除代码</span>
+        <span class="legend-item"><i class="legend-swatch peer"></i>其他步骤改动</span>
+        <span class="legend-item"><i class="legend-swatch comment"></i>评论位置</span>
+      </span>
+    </div>
   </div>
   <div class="top-actions">
     <span class="metric"><b>@@REPO_COUNT@@</b> repos</span>
@@ -296,7 +376,7 @@ body.semantic-enabled .code-identifier:hover { color:var(--primary); text-decora
 
 <section id="guided-review" class="view guided-shell hidden">
   <aside class="step-sidebar">
-    <h2>本节步骤</h2>
+    <h2 id="step-sidebar-title">本节步骤</h2>
     <nav id="guided-steps"></nav>
   </aside>
   <main class="code-stage">
@@ -343,7 +423,14 @@ body.semantic-enabled .code-identifier:hover { color:var(--primary); text-decora
 <div id="save-state" class="save-state hidden">
   <span class="save-state-dot"></span><span id="save-state-text">仅浏览器草稿</span>
 </div>
-<div id="selection-menu" class="selection-menu"><button type="button">评论</button></div>
+<div id="selection-menu" class="selection-menu">
+  <button type="button" data-action="comment">评论</button>
+  <button type="button" data-action="task" class="hidden">添加到任务</button>
+  <button type="button" data-action="explain">不懂就问</button>
+</div>
+<section id="task-composer" class="task-composer hidden" aria-label="添加到任务">
+  <textarea id="task-prompt" placeholder="添加可选评论…" aria-label="注释内容"></textarea>
+</section>
 <div id="comments-popover" class="comments-popover" role="dialog" aria-labelledby="comments-title">
   <div class="popover-head">
     <h2 id="comments-title">所有评论</h2>
@@ -383,6 +470,9 @@ const COMMENT_STATUS_LABELS = {pending:'未处理', processing:'处理中', reso
 const COMMENT_STATUS_ORDER = {pending:0, processing:1, resolved:2};
 const commentStorageKey = `easy-cr-comments:${report.reportId}`;
 const legacyCommentStorageKey = `codex-cr-comments:${report.commit}`;
+const commentDraftPrefix = `easy-cr-comment-draft:${report.reportId}:`;
+const codeQaStorageKey = `easy-cr-code-qa:${report.reportId}`;
+const taskDraftStorageKey = `easy-cr-task-draft:${report.reportId}`;
 const themeStorageKey = 'easy-cr-theme';
 const embeddedCommentStateAtLoad = JSON.parse(document.getElementById(COMMENTS_ELEMENT_ID).textContent);
 let commentState = readEmbeddedCommentState();
@@ -394,18 +484,19 @@ let activeStepIndex = 0;
 let returnView = 'overview';
 let filter = 'all';
 let activeComposer = null;
+let activeExplainBox = null;
+let activeExplainLines = [];
 let pendingTextSelection = null;
 let selectionAnchor = null;
+let textMatchWrappers = [];
 let commentOpenTimer = null;
 let commentCloseTimer = null;
 let activeCommentsAnchor = null;
 let activeCommentsFilter = null;
-let semanticHoverTimer = null;
-let semanticClearTimer = null;
-let semanticHighlightLocked = false;
-let semanticHighlightOrigin = null;
 let completeReviewResetTimer = null;
 let commentRefreshPending = false;
+let taskDraft = readTaskDraft();
+let taskEditing = null;
 const semanticReferenceCache = new Map();
 const chapterOverview = document.getElementById('chapter-overview');
 const guidedReview = document.getElementById('guided-review');
@@ -413,6 +504,8 @@ const fullDiffView = document.getElementById('full-diff-view');
 const fullDiffs = document.getElementById('full-diffs');
 const homeButton = document.getElementById('home-button');
 const selectionMenu = document.getElementById('selection-menu');
+const taskComposer = document.getElementById('task-composer');
+const taskPrompt = document.getElementById('task-prompt');
 const commentsPopover = document.getElementById('comments-popover');
 const commentsList = document.getElementById('comments-list');
 const commentCountButton = document.getElementById('comment-count');
@@ -566,7 +659,7 @@ async function persistMutation() {
   try {
     await writeCommentsToHtml();
   } catch (error) {
-    setSaveState('error', `${error.message} · 评论尚未写入 HTML`);
+    setSaveState('error', `${error.message} · 评论保存失败`);
   }
 }
 
@@ -575,6 +668,85 @@ function currentStep() { return currentChapter()?.steps[activeStepIndex]; }
 function repositoryFor(repoId) { return report.repositories[repoId]; }
 function fileKey(card) { return `${card.dataset.repoId}:${card.dataset.path}`; }
 function allCardsForKey(key) { return [...document.querySelectorAll(`.file-card[data-file-key="${CSS.escape(key)}"]`)]; }
+function currentPageRoot() {
+  if (activeView === 'guided') return guidedReview;
+  if (activeView === 'full') return fullDiffView;
+  return chapterOverview;
+}
+
+function clearTextMatches() {
+  textMatchWrappers.forEach(wrapper => {
+    const parent = wrapper.parentNode;
+    if (!parent) return;
+    parent.replaceChild(document.createTextNode(wrapper.textContent), wrapper);
+    parent.normalize();
+  });
+  textMatchWrappers = [];
+}
+
+function matchOverlapsCapturedSelection(span, node, start, end, captured) {
+  if (!captured) return false;
+  const matchStart = offsetInside(span, node, start);
+  const matchEnd = offsetInside(span, node, end);
+  if (captured.kind === 'qa') {
+    return span === captured.container
+      && matchStart < captured.endOffset
+      && matchEnd > captured.startOffset;
+  }
+  if (captured.kind !== 'code') return false;
+  const line = span.closest('.line');
+  const lineIndex = captured.lines.indexOf(line);
+  if (lineIndex < captured.start || lineIndex > captured.end) return false;
+  const selectionStart = lineIndex === captured.start ? captured.startOffset : 0;
+  const selectionEnd = lineIndex === captured.end
+    ? captured.endOffset
+    : span.textContent.length;
+  return matchStart < selectionEnd && matchEnd > selectionStart;
+}
+
+function highlightPageTextMatches(text, captured=null) {
+  clearTextMatches();
+  const needle = String(text || '').trim();
+  if (!needle || needle.length < 2 || needle.length > 120) return;
+  const spans = [...currentPageRoot().querySelectorAll('.diff .line:not(.hidden) > span, .explain-message')];
+  spans.forEach(span => {
+    const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (!node.nodeValue.includes(needle)) return NodeFilter.FILTER_REJECT;
+        if (node.parentElement?.closest('.selection-text-match')) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    const matches = [];
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      let index = node.nodeValue.indexOf(needle);
+      while (index >= 0) {
+        const start = index;
+        const end = index + needle.length;
+        const overlapsSelection = matchOverlapsCapturedSelection(
+          span,
+          node,
+          start,
+          end,
+          captured
+        );
+        if (!overlapsSelection) matches.push({node, start, end});
+        index = node.nodeValue.indexOf(needle, index + needle.length);
+      }
+    }
+    matches.reverse().forEach(match => {
+      const after = match.node.splitText(match.end);
+      const selected = match.node.splitText(match.start);
+      const wrapper = document.createElement('span');
+      wrapper.className = 'selection-text-match';
+      wrapper.textContent = selected.nodeValue;
+      selected.parentNode.replaceChild(wrapper, selected);
+      textMatchWrappers.push(wrapper);
+      after.normalize?.();
+    });
+  });
+}
 
 function addGutters(root=document) {
   root.querySelectorAll('.line').forEach(line => {
@@ -589,12 +761,14 @@ function addGutters(root=document) {
 }
 
 function showView(name) {
+  clearTextMatches();
   activeView = name;
   chapterOverview.classList.toggle('hidden', name !== 'overview');
   guidedReview.classList.toggle('hidden', name !== 'guided');
   fullDiffView.classList.toggle('hidden', name !== 'full');
   document.getElementById('mode-toggle').textContent = name === 'full' ? '返回技术方案' : '完整 Diff';
   if (name === 'guided') renderGuided();
+  requestAnimationFrame(renderTaskAnnotations);
 }
 
 function chapterRepositoryIds(chapter) {
@@ -681,6 +855,27 @@ function renderOverview() {
   });
 }
 
+function lineReviewNumber(line) {
+  return Number(line.dataset.newLine || line.dataset.oldLine || 0);
+}
+
+function lineInRanges(line, ranges=[]) {
+  const number = lineReviewNumber(line);
+  return number > 0 && ranges.some(range => range.start <= number && number <= range.end);
+}
+
+function changedLine(line) {
+  return line.classList.contains('add') || line.classList.contains('del');
+}
+
+function referencesForFile(fileKeyValue) {
+  return chapters.flatMap(chapter => chapter.steps.flatMap(step => (
+    step.code
+      .filter(reference => reference.fileKey === fileKeyValue)
+      .map(reference => ({chapterId:chapter.id, stepId:step.id, reference}))
+  )));
+}
+
 function applyDisplayMode(card, reference) {
   card.dataset.displayMode = reference.displayMode;
   const lines = [...card.querySelectorAll('.line')];
@@ -712,11 +907,39 @@ function applyDisplayMode(card, reference) {
   }
 }
 
+function applyGuidedDisplayMode(card, references) {
+  const chapter = currentChapter();
+  const step = currentStep();
+  const fileKeyValue = references[0]?.fileKey;
+  const primary = references.find(reference => reference.displayMode !== 'diff-only') || references[0];
+  card.dataset.displayMode = primary?.displayMode || '';
+  const lines = [...card.querySelectorAll('.line')];
+  lines.forEach(line => line.classList.remove('peer-step-change'));
+  if (!fileKeyValue || !references.some(reference => reference.displayMode === 'guided' && reference.ranges?.length)) {
+    if (primary) applyDisplayMode(card, primary);
+    return;
+  }
+  const allReferences = referencesForFile(fileKeyValue);
+  const currentRanges = allReferences
+    .filter(item => item.chapterId === chapter.id && item.stepId === step.id)
+    .flatMap(item => item.reference.ranges || []);
+  const peerRanges = allReferences
+    .filter(item => item.chapterId !== chapter.id || item.stepId !== step.id)
+    .flatMap(item => item.reference.ranges || []);
+  lines.forEach(line => {
+    const active = lineInRanges(line, currentRanges);
+    const peer = !active && changedLine(line) && lineInRanges(line, peerRanges);
+    if (!active && !peer && !line.classList.contains('hunk')) line.classList.add('hidden');
+    if (peer) line.classList.add('peer-step-change');
+  });
+}
+
 function renderGuided() {
   const chapter = currentChapter();
   if (!chapter) return showView('overview');
   activeStepIndex = Math.min(activeStepIndex, chapter.steps.length - 1);
   const step = currentStep();
+  document.getElementById('step-sidebar-title').textContent = chapter.title;
   const stepNav = document.getElementById('guided-steps');
   stepNav.replaceChildren();
   chapter.steps.forEach((item, index) => {
@@ -732,15 +955,20 @@ function renderGuided() {
 
   const codeHost = document.getElementById('guided-code');
   codeHost.replaceChildren();
+  const referencesByFile = new Map();
   step.code.forEach(reference => {
-    const source = document.querySelector(`#full-diffs .file-card[data-file-key="${CSS.escape(reference.fileKey)}"]`);
+    if (!referencesByFile.has(reference.fileKey)) referencesByFile.set(reference.fileKey, []);
+    referencesByFile.get(reference.fileKey).push(reference);
+  });
+  referencesByFile.forEach((references, key) => {
+    const source = document.querySelector(`#full-diffs .file-card[data-file-key="${CSS.escape(key)}"]`);
     if (!source || source.classList.contains('test')) return;
     const clone = source.cloneNode(true);
     clone.removeAttribute('id');
     clone.querySelectorAll('.inline-comment').forEach(item => item.remove());
     clone.querySelectorAll('.line-no').forEach(item => item.remove());
     clone.querySelectorAll('.hidden').forEach(item => item.classList.remove('hidden'));
-    applyDisplayMode(clone, reference);
+    applyGuidedDisplayMode(clone, references);
     codeHost.appendChild(clone);
     addGutters(clone);
   });
@@ -966,11 +1194,39 @@ function captureTextSelection() {
     endOffset = lines[end - 1].querySelector(':scope > span').textContent.length;
     const quote = selectedCodeText(lines, start, end - 1, startOffset, endOffset).trim();
     if (!quote) return null;
-    return {card, lines, start, end:end - 1, startOffset, endOffset, quote, rect:range.getBoundingClientRect()};
+    return {kind:'code', card, lines, start, end:end - 1, startOffset, endOffset, quote, rect:range.getBoundingClientRect()};
   }
   const quote = selectedCodeText(lines, start, end, startOffset, endOffset).trim();
   if (!quote) return null;
-  return {card, lines, start, end, startOffset, endOffset, quote, rect:range.getBoundingClientRect()};
+  return {kind:'code', card, lines, start, end, startOffset, endOffset, quote, rect:range.getBoundingClientRect()};
+}
+
+function captureExplanationSelection() {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  const startMessage = nodeElement(range.startContainer)?.closest('.explain-message');
+  const endMessage = nodeElement(range.endContainer)?.closest('.explain-message');
+  const box = startMessage?.closest('.explain-box');
+  if (!startMessage || startMessage !== endMessage || !box?.dataset.codeQaLocation) return null;
+  const startOffset = offsetInside(startMessage, range.startContainer, range.startOffset);
+  const endOffset = offsetInside(startMessage, range.endContainer, range.endOffset);
+  if (startOffset < 0 || endOffset <= startOffset) return null;
+  const quote = selection.toString().trim();
+  if (!quote) return null;
+  return {
+    kind:'qa',
+    container:startMessage,
+    box,
+    startOffset,
+    endOffset,
+    quote,
+    rect:range.getBoundingClientRect()
+  };
+}
+
+function captureTaskSelection() {
+  return captureTextSelection() || captureExplanationSelection();
 }
 
 function positionFloating(element, rect) {
@@ -994,10 +1250,19 @@ function showSelectionMenu(rect) {
   selectionMenu.classList.add('visible');
 }
 
-function clearComposer() {
+function composerHasDraft(composer=activeComposer) {
+  return Boolean(composer?.querySelector('textarea')?.value.trim());
+}
+
+function clearComposer({force=false, clearDraft=false}={}) {
+  if (!force && composerHasDraft()) return false;
+  if (clearDraft && activeComposer?.dataset.draftKey) {
+    localStorage.removeItem(activeComposer.dataset.draftKey);
+  }
   activeComposer?.remove();
   activeComposer = null;
   document.querySelectorAll('.line.selected').forEach(line => line.classList.remove('selected'));
+  return true;
 }
 
 function bindCommentKeys(textarea, onCancel, onSave) {
@@ -1019,7 +1284,7 @@ function openCommentComposer({
   inlineAfter=null,
   selectedLines=[]
 }) {
-  clearComposer();
+  if (!clearComposer()) return;
   const composer = document.createElement('div');
   composer.className = `comment-composer ${inlineAfter ? 'inline-comment-composer' : 'floating-comment-composer'}`;
   composer.innerHTML = `<div class="comment-title"><span></span><small>Esc 取消</small></div>
@@ -1027,12 +1292,19 @@ function openCommentComposer({
     <div class="comment-actions"><button type="button" class="cancel">取消</button><button type="button" class="save">保存评论</button></div>`;
   composer.querySelector('.comment-title span').textContent = title;
   selectedLines.forEach(line => line.classList.add('selected'));
-  if (inlineAfter) inlineAfter.insertAdjacentElement('afterend', composer);
+  if (inlineAfter) insertCodeAffordance(inlineAfter, composer, 1);
   else positionFloating(composer, rect);
   activeComposer = composer;
   const textarea = composer.querySelector('textarea');
+  const draftKey = `${commentDraftPrefix}${btoa(unescape(encodeURIComponent(JSON.stringify({scope,target,quote})))).slice(0,180)}`;
+  composer.dataset.draftKey = draftKey;
+  textarea.value = localStorage.getItem(draftKey) || '';
+  textarea.addEventListener('input', () => {
+    if (textarea.value) localStorage.setItem(draftKey, textarea.value);
+    else localStorage.removeItem(draftKey);
+  });
   textarea.focus();
-  const cancel = () => clearComposer();
+  const cancel = () => clearComposer({force:true, clearDraft:true});
   const save = async () => {
     const body = textarea.value.trim();
     if (!body) return textarea.focus();
@@ -1040,7 +1312,7 @@ function openCommentComposer({
       id:uniqueId('comment'), scope, target, quote, body, status:'pending', replies:[],
       createdAt:new Date().toISOString(), updatedAt:null
     });
-    clearComposer();
+    clearComposer({force:true, clearDraft:true});
     await persistMutation();
   };
   composer.querySelector('.cancel').addEventListener('click', cancel);
@@ -1071,6 +1343,741 @@ function openTextComment(draft) {
     inlineAfter:endLine,
     selectedLines:draft.lines.slice(draft.start, draft.end + 1)
   });
+}
+
+function selectedCodeTarget(draft) {
+  const startLine = draft.lines[draft.start];
+  const endLine = draft.lines[draft.end];
+  const chapter = currentChapter();
+  const step = currentStep();
+  return {
+    chapterId:activeView === 'guided' ? chapter?.id : null,
+    stepId:activeView === 'guided' ? step?.id : null,
+    repoId:draft.card.dataset.repoId,
+    path:draft.card.dataset.path,
+    startAnchor:startLine.dataset.anchor,
+    endAnchor:endLine.dataset.anchor,
+    startOffset:draft.startOffset,
+    endOffset:draft.endOffset,
+    lineLabel:lineLabel(startLine) === lineLabel(endLine) ? lineLabel(startLine) : `${lineLabel(startLine)}–${lineLabel(endLine)}`
+  };
+}
+
+function selectedTaskTarget(draft) {
+  if (draft.kind !== 'qa') return null;
+  return {
+    targetType:'qa',
+    chapterId:draft.box.dataset.chapterId || null,
+    stepId:draft.box.dataset.stepId || null,
+    repoId:draft.box.dataset.repoId,
+    path:draft.box.dataset.path,
+    locationKey:draft.box.dataset.codeQaLocation,
+    messageIndex:Number(draft.container.dataset.messageIndex || 0),
+    startOffset:draft.startOffset,
+    endOffset:draft.endOffset,
+    lineLabel:`不懂就问 · ${draft.container.classList.contains('user') ? '提问' : '回答'} ${Number(draft.container.dataset.messageIndex || 0) + 1}`
+  };
+}
+
+function readTaskDraft() {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(taskDraftStorageKey) || 'null');
+    if (value && Array.isArray(value.annotations)) {
+      return {
+        annotations:value.annotations
+          .filter(annotation => (
+            annotation?.target?.targetType === 'qa'
+            && typeof annotation.body === 'string'
+            && annotation.body.trim()
+          ))
+          .slice(0, 20)
+      };
+    }
+  } catch (_) {}
+  return {annotations:[]};
+}
+
+function saveTaskDraft() {
+  try {
+    sessionStorage.setItem(taskDraftStorageKey, JSON.stringify(taskDraft));
+  } catch (_) {}
+}
+
+function taskAnnotationKey(target) {
+  return [
+    target.targetType || 'code',
+    target.repoId,
+    target.path,
+    target.startAnchor || target.locationKey,
+    target.endAnchor || target.messageIndex,
+    target.startOffset,
+    target.endOffset
+  ].join('\u001f');
+}
+
+function textPointAtOffset(root, offset) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      return node.parentElement?.closest('.task-annotation-pin')
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  let remaining = Math.max(0, Number(offset || 0));
+  let last = null;
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    last = node;
+    if (remaining <= node.nodeValue.length) {
+      return {node, offset:remaining};
+    }
+    remaining -= node.nodeValue.length;
+  }
+  return last
+    ? {node:last, offset:last.nodeValue.length}
+    : {node:root, offset:0};
+}
+
+function taskQaAnnotationRange(annotation) {
+  const target = annotation.target;
+  const box = document.querySelector(`.explain-box[data-code-qa-location="${CSS.escape(target.locationKey || '')}"]`);
+  const message = box?.querySelector(`.explain-message[data-message-index="${Number(target.messageIndex || 0)}"]`);
+  if (!message) return null;
+  const startPoint = textPointAtOffset(message, target.startOffset);
+  const endPoint = textPointAtOffset(message, target.endOffset);
+  const range = document.createRange();
+  range.setStart(startPoint.node, startPoint.offset);
+  range.setEnd(endPoint.node, endPoint.offset);
+  return {range, container:message};
+}
+
+function focusTaskAnnotation(annotation) {
+  const target = annotation.target;
+  if (target.targetType === 'qa') {
+    restoreCodeQa(target.locationKey);
+    requestAnimationFrame(() => {
+      const message = document.querySelector(`.explain-box[data-code-qa-location="${CSS.escape(target.locationKey || '')}"] .explain-message[data-message-index="${Number(target.messageIndex || 0)}"]`);
+      message?.scrollIntoView({block:'center', behavior:'smooth'});
+    });
+    return;
+  }
+  const chapterIndex = chapters.findIndex(chapter => chapter.id === target.chapterId);
+  if (chapterIndex >= 0 && target.stepId) {
+    activeChapterIndex = chapterIndex;
+    const stepIndex = chapters[chapterIndex].steps.findIndex(step => step.id === target.stepId);
+    activeStepIndex = stepIndex >= 0 ? stepIndex : 0;
+    showView('guided');
+  } else {
+    showView('full');
+  }
+  requestAnimationFrame(() => {
+    const root = activeView === 'guided' ? guidedReview : fullDiffView;
+    const card = root.querySelector(`.file-card[data-file-key="${CSS.escape(`${target.repoId}:${target.path}`)}"]`);
+    const line = card?.querySelector(`.line[data-anchor="${CSS.escape(target.startAnchor)}"]`);
+    line?.scrollIntoView({block:'center', behavior:'smooth'});
+  });
+}
+
+function positionTaskComposer(rect) {
+  if (!rect || !taskEditing) return;
+  const margin = 12;
+  const gap = 16;
+  const scrollLeft = window.scrollX;
+  const scrollTop = window.scrollY;
+  const width = taskComposer.offsetWidth;
+  const height = taskComposer.offsetHeight;
+  const rightLimit = scrollLeft + window.innerWidth - width - margin;
+  const bottomLimit = scrollTop + window.innerHeight - height - margin;
+  let left = rect.right + scrollLeft + gap;
+  if (left > rightLimit) {
+    left = Math.max(scrollLeft + margin, rect.left + scrollLeft - width - gap);
+  }
+  const top = Math.max(
+    scrollTop + margin,
+    Math.min(rect.top + scrollTop, bottomLimit)
+  );
+  taskComposer.style.left = `${left}px`;
+  taskComposer.style.top = `${top}px`;
+}
+
+function renderTaskAnnotations() {
+  document.querySelectorAll('.task-annotation-pin').forEach(pin => pin.remove());
+  document.querySelectorAll('.task-annotation-summary').forEach(summary => summary.remove());
+  const ranges = [];
+  const annotationsByLocation = new Map();
+  taskDraft.annotations.forEach((annotation, index) => {
+    const found = taskQaAnnotationRange(annotation);
+    if (!found) return;
+    ranges.push(found.range);
+    const rect = found.range.getBoundingClientRect();
+    if (!rect.width && !rect.height) return;
+    const pin = document.createElement('button');
+    pin.type = 'button';
+    pin.className = 'task-annotation-pin';
+    const pinNumber = document.createElement('span');
+    pinNumber.textContent = String(index + 1);
+    pin.appendChild(pinNumber);
+    pin.title = `注释 ${index + 1}`;
+    pin.style.left = `${rect.right + window.scrollX}px`;
+    pin.style.top = `${rect.top + window.scrollY}px`;
+    pin.addEventListener('click', () => editTaskAnnotation(annotation));
+    document.body.appendChild(pin);
+    const locationKey = annotation.target.locationKey;
+    if (!annotationsByLocation.has(locationKey)) annotationsByLocation.set(locationKey, []);
+    annotationsByLocation.get(locationKey).push({annotation, index});
+  });
+  if (window.CSS?.highlights && typeof Highlight !== 'undefined') {
+    CSS.highlights.set('task-annotations', new Highlight(...ranges));
+  }
+  annotationsByLocation.forEach((items, locationKey) => {
+    const box = document.querySelector(`.explain-box[data-code-qa-location="${CSS.escape(locationKey || '')}"]`);
+    const composer = box?.querySelector('.explain-composer');
+    if (!composer) return;
+    const summary = document.createElement('div');
+    summary.className = 'task-annotation-summary';
+    const chip = document.createElement('div');
+    chip.className = 'task-annotation-chip';
+    chip.tabIndex = 0;
+    const count = document.createElement('span');
+    count.textContent = `▱ ${items.length} 条注释`;
+    const clear = document.createElement('button');
+    clear.type = 'button';
+    clear.className = 'task-annotation-clear';
+    clear.setAttribute('aria-label', '清空本处注释');
+    clear.textContent = '×';
+    clear.addEventListener('click', event => {
+      event.stopPropagation();
+      clearTaskAnnotationsForLocation(locationKey);
+    });
+    chip.append(count, clear);
+    const preview = document.createElement('div');
+    preview.className = 'task-annotation-preview';
+    items.forEach(({annotation, index}) => {
+      const item = document.createElement('div');
+      item.className = 'task-preview-item';
+      const number = document.createElement('div');
+      number.className = 'task-preview-number';
+      number.textContent = `${index + 1}.`;
+      const content = document.createElement('div');
+      const quoteLabel = document.createElement('div');
+      quoteLabel.className = 'task-preview-label';
+      quoteLabel.textContent = '所选文本：';
+      const quote = document.createElement('div');
+      quote.className = 'task-preview-value';
+      quote.textContent = annotation.quote;
+      const bodyLabel = document.createElement('div');
+      bodyLabel.className = 'task-preview-label';
+      bodyLabel.textContent = '用户评论：';
+      const body = document.createElement('div');
+      body.className = 'task-preview-value';
+      body.textContent = annotation.body;
+      content.append(quoteLabel, quote, bodyLabel, body);
+      item.append(number, content);
+      preview.appendChild(item);
+    });
+    summary.append(chip, preview);
+    composer.prepend(summary);
+  });
+}
+
+function addTaskAnnotation(draft) {
+  const target = selectedTaskTarget(draft);
+  if (!target) return;
+  if (taskEditing && taskPrompt.value.trim()) {
+    taskPrompt.focus();
+    return;
+  }
+  taskEditing = {target, quote:draft.quote, rect:draft.rect};
+  taskPrompt.value = '';
+  taskComposer.classList.remove('hidden');
+  clearTextMatches();
+  positionTaskComposer(draft.rect);
+  taskPrompt.focus();
+}
+
+function editTaskAnnotation(annotation) {
+  if (
+    taskEditing
+    && taskPrompt.value.trim()
+    && taskAnnotationKey(taskEditing.target) !== taskAnnotationKey(annotation.target)
+  ) {
+    taskPrompt.focus();
+    return;
+  }
+  const openEditor = () => {
+    const found = taskQaAnnotationRange(annotation);
+    if (!found) return;
+    const rect = found.range.getBoundingClientRect();
+    taskEditing = {
+      target:annotation.target,
+      quote:annotation.quote,
+      rect
+    };
+    taskPrompt.value = annotation.body;
+    taskComposer.classList.remove('hidden');
+    positionTaskComposer(rect);
+    taskPrompt.focus();
+    taskPrompt.setSelectionRange(taskPrompt.value.length, taskPrompt.value.length);
+  };
+  if (!taskQaAnnotationRange(annotation)) {
+    restoreCodeQa(annotation.target.locationKey);
+    requestAnimationFrame(openEditor);
+    return;
+  }
+  openEditor();
+}
+
+function cancelTaskAnnotation() {
+  taskEditing = null;
+  taskPrompt.value = '';
+  taskComposer.classList.add('hidden');
+}
+
+function saveTaskAnnotation() {
+  if (!taskEditing) return;
+  const body = taskPrompt.value.trim();
+  if (!body) return taskPrompt.focus();
+  const key = taskAnnotationKey(taskEditing.target);
+  const existing = taskDraft.annotations.findIndex(
+    annotation => taskAnnotationKey(annotation.target) === key
+  );
+  const annotation = {
+    id:existing >= 0 ? taskDraft.annotations[existing].id : uniqueId('task-annotation'),
+    target:taskEditing.target,
+    quote:taskEditing.quote,
+    body,
+    createdAt:existing >= 0
+      ? taskDraft.annotations[existing].createdAt
+      : new Date().toISOString()
+  };
+  if (existing >= 0) taskDraft.annotations[existing] = annotation;
+  else taskDraft.annotations.push(annotation);
+  saveTaskDraft();
+  cancelTaskAnnotation();
+  renderTaskAnnotations();
+}
+
+function taskAnnotationsForLocation(locationKey) {
+  return taskDraft.annotations.filter(annotation => annotation.target.locationKey === locationKey);
+}
+
+function clearTaskAnnotationsForLocation(locationKey) {
+  taskDraft.annotations = taskDraft.annotations.filter(
+    annotation => annotation.target.locationKey !== locationKey
+  );
+  saveTaskDraft();
+  renderTaskAnnotations();
+}
+
+function taskQuestion(prompt, annotations) {
+  const sections = prompt ? [prompt, ''] : [];
+  sections.push(`以下是我从当前问答中添加的 ${annotations.length} 条注释：`);
+  annotations.forEach((annotation, index) => {
+    sections.push(
+      '',
+      `${index + 1}. ${annotation.target.lineLabel}`,
+      '所选文本：',
+      annotation.quote,
+      '用户评论：',
+      annotation.body
+    );
+  });
+  return sections.join('\n');
+}
+
+function closeExplanation() {
+  activeExplainLines.forEach(line => line.classList.remove(
+    'explain-target',
+    'explain-target-start',
+    'explain-target-end'
+  ));
+  activeExplainLines = [];
+  activeExplainBox?.remove();
+  activeExplainBox = null;
+}
+
+function setExplanationTargetHighlight(visible) {
+  activeExplainLines.forEach((line, index) => {
+    line.classList.toggle('explain-target', visible);
+    line.classList.toggle('explain-target-start', visible && index === 0);
+    line.classList.toggle('explain-target-end', visible && index === activeExplainLines.length - 1);
+  });
+}
+
+function codeQaLocationKey(target) {
+  return [
+    target?.repoId || '',
+    target?.path || '',
+    target?.startAnchor || '',
+    target?.endAnchor || '',
+    Number(target?.startOffset || 0),
+    Number(target?.endOffset || 0)
+  ].join('\u001f');
+}
+
+function readCodeQaStore() {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(codeQaStorageKey) || 'null');
+    if (!value || typeof value !== 'object') {
+      return {activeKey:null, threads:{}};
+    }
+    if (value.threads && typeof value.threads === 'object') {
+      return {
+        activeKey:typeof value.activeKey === 'string' ? value.activeKey : null,
+        threads:value.threads
+      };
+    }
+    if (value.target && value.quote) {
+      const locationKey = codeQaLocationKey(value.target);
+      value.locationKey = locationKey;
+      return {activeKey:locationKey, threads:{[locationKey]:value}};
+    }
+  } catch (_) {
+    // Ignore an invalid or expired browser session.
+  }
+  return {activeKey:null, threads:{}};
+}
+
+function readCodeQaState(locationKey=null) {
+  const store = readCodeQaStore();
+  const key = locationKey || store.activeKey;
+  return key && store.threads[key] && typeof store.threads[key] === 'object'
+    ? store.threads[key]
+    : null;
+}
+
+function writeCodeQaState(value) {
+  try {
+    const store = readCodeQaStore();
+    const locationKey = value.locationKey || codeQaLocationKey(value.target);
+    if (!locationKey) return;
+    value.locationKey = locationKey;
+    store.activeKey = locationKey;
+    store.threads[locationKey] = value;
+    const keys = Object.keys(store.threads);
+    if (keys.length > 30) {
+      keys
+        .filter(key => key !== store.activeKey)
+        .slice(0, keys.length - 30)
+        .forEach(key => delete store.threads[key]);
+    }
+    sessionStorage.setItem(codeQaStorageKey, JSON.stringify(store));
+  } catch (_) {}
+}
+
+function insertCodeAffordance(targetLine, element, priority) {
+  element.dataset.codeAffordancePriority = String(priority);
+  let anchor = targetLine;
+  while (anchor.nextElementSibling) {
+    const siblingPriority = Number(anchor.nextElementSibling.dataset.codeAffordancePriority);
+    if (!Number.isFinite(siblingPriority) || siblingPriority > priority) break;
+    anchor = anchor.nextElementSibling;
+  }
+  anchor.insertAdjacentElement('afterend', element);
+}
+
+function createExplanationBox(draft, state) {
+  closeExplanation();
+  const endLine = draft.lines[draft.end];
+  activeExplainLines = draft.lines.slice(draft.start, draft.end + 1);
+  activeExplainLines.forEach(line => line.classList.remove('selected'));
+  const box = document.createElement('div');
+  box.className = 'explain-box';
+  box.innerHTML = `<div class="explain-head"><button class="explain-toggle" type="button" aria-expanded="true" title="展开/收起">▾</button><span>不懂就问</span></div><div class="explain-content"><div class="explain-thread"><div class="explain-empty">针对所选代码输入问题，可继续追问。</div></div><div class="explain-composer"><textarea placeholder="针对这段代码问 AI…" aria-label="向 AI 提问"></textarea><button class="explain-send" type="button">发送</button><div class="explain-hint">Enter 发送，Command+Enter 或 Shift+Enter 换行</div></div></div>`;
+  const toggle = box.querySelector('.explain-toggle');
+  toggle.addEventListener('click', () => {
+    box.classList.toggle('collapsed');
+    const expanded = !box.classList.contains('collapsed');
+    toggle.textContent = expanded ? '▾' : '▸';
+    toggle.setAttribute('aria-expanded', String(expanded));
+    state.collapsed = !expanded;
+    setExplanationTargetHighlight(expanded);
+    writeCodeQaState(state);
+  });
+  if (state.collapsed) {
+    box.classList.add('collapsed');
+    toggle.textContent = '▸';
+    toggle.setAttribute('aria-expanded', 'false');
+  }
+  setExplanationTargetHighlight(!state.collapsed);
+  insertCodeAffordance(endLine, box, 0);
+  activeExplainBox = box;
+  return box;
+}
+
+function appendExplanationMessage(thread, role, content = '', options = {}) {
+  thread.querySelector('.explain-empty')?.remove();
+  const message = document.createElement('div');
+  message.className = `explain-message ${role}`;
+  message.dataset.messageIndex = String(thread.querySelectorAll('.explain-message').length);
+  if (role === 'user' && Number(options.annotationCount || 0) > 0) {
+    message.classList.add('has-annotations');
+    const count = document.createElement('span');
+    count.className = 'explain-annotation-count';
+    count.textContent = `${options.annotationCount} 条注释`;
+    message.appendChild(count);
+    if (content) {
+      const body = document.createElement('span');
+      body.className = 'explain-message-body';
+      body.textContent = content;
+      message.appendChild(body);
+    }
+  } else {
+    message.textContent = content;
+  }
+  thread.append(message);
+  thread.scrollTop = thread.scrollHeight;
+  return message;
+}
+
+async function runExplanationTurn({
+  state,
+  thread,
+  selection,
+  question,
+  target,
+  displayQuestion=question,
+  annotationCount=0
+}) {
+  const history = Array.isArray(state.history) ? [...state.history] : [];
+  const priorHistory = history.slice(-8);
+  appendExplanationMessage(
+    thread,
+    'user',
+    displayQuestion,
+    {annotationCount}
+  );
+  history.push({
+    role:'user',
+    content:question,
+    displayContent:displayQuestion,
+    annotationCount
+  });
+  state.history = history.slice(-8);
+  state.input = '';
+  writeCodeQaState(state);
+  const answer = appendExplanationMessage(thread, 'assistant');
+  answer.classList.add('loading');
+  answer.append(
+    document.createTextNode('正在思考'),
+    Object.assign(document.createElement('span'), {
+      className:'explain-waiting',
+      innerHTML:'<i></i><i></i><i></i>'
+    })
+  );
+  try {
+    const response = await fetch(`${helper.endpoint}/api/explain`, {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'X-Easy-CR-Token':helper.token
+      },
+      body:JSON.stringify({
+        reportId:report.reportId,
+        selection,
+        question,
+        history:priorHistory,
+        target
+      })
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || `请求失败（HTTP ${response.status}）`);
+    }
+    let received = false;
+    const appendChunk = chunk => {
+      if (!chunk) return;
+      if (!received) {
+        answer.replaceChildren();
+        answer.classList.remove('loading');
+        received = true;
+      }
+      answer.append(document.createTextNode(chunk));
+      thread.scrollTop = thread.scrollHeight;
+    };
+    if (!response.body?.getReader) {
+      appendChunk(await response.text());
+    } else {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const {value, done} = await reader.read();
+        if (done) break;
+        appendChunk(decoder.decode(value, {stream:true}));
+      }
+      appendChunk(decoder.decode());
+    }
+    if (!received || !answer.textContent.trim()) {
+      answer.classList.remove('loading');
+      answer.textContent = '未生成回答';
+    }
+    history.push({role:'assistant', content:answer.textContent});
+    state.history = history.slice(-8);
+    writeCodeQaState(state);
+    return answer.textContent;
+  } catch (error) {
+    answer.classList.add('error');
+    answer.classList.remove('loading');
+    answer.textContent = error.message;
+    throw error;
+  }
+}
+
+function explainTextSelection(draft, restoredState=null) {
+  const target = selectedCodeTarget(draft);
+  const locationKey = codeQaLocationKey(target);
+  const state = restoredState || readCodeQaState(locationKey) || {
+    view:activeView,
+    chapterId:target.chapterId,
+    stepId:target.stepId,
+    target,
+    quote:draft.quote,
+    history:[],
+    input:'',
+    collapsed:false
+  };
+  state.locationKey = locationKey;
+  state.view = activeView;
+  state.chapterId = target.chapterId;
+  state.stepId = target.stepId;
+  state.target = target;
+  state.quote = draft.quote;
+  state.history = Array.isArray(state.history) ? state.history : [];
+  state.input = typeof state.input === 'string' ? state.input : '';
+  state.collapsed = Boolean(state.collapsed);
+  writeCodeQaState(state);
+  const box = createExplanationBox(draft, state);
+  box.dataset.codeQaLocation = locationKey;
+  box.dataset.chapterId = target.chapterId || '';
+  box.dataset.stepId = target.stepId || '';
+  box.dataset.repoId = target.repoId || '';
+  box.dataset.path = target.path || '';
+  const thread = box.querySelector('.explain-thread');
+  const textarea = box.querySelector('textarea');
+  const send = box.querySelector('.explain-send');
+  let busy = false;
+
+  state.history.forEach(item => appendExplanationMessage(
+    thread,
+    item.role,
+    item.displayContent || item.content,
+    {annotationCount:Number(item.annotationCount || 0)}
+  ));
+  textarea.value = state.input;
+  textarea.addEventListener('input', () => {
+    state.input = textarea.value;
+    writeCodeQaState(state);
+  });
+
+  const submitQuestion = async (rawQuestion, annotations) => {
+    if (busy) return;
+    const question = annotations.length
+      ? taskQuestion(rawQuestion, annotations)
+      : rawQuestion;
+    if (helper.mode !== 'local') {
+      appendExplanationMessage(thread, 'error', helper.error || 'Easy CR 评论服务未连接');
+      return;
+    }
+    if (!helper.agentBound) {
+      appendExplanationMessage(thread, 'error', '该报告未绑定生成它的 Agent，无法回答');
+      return;
+    }
+    busy = true;
+    send.disabled = true;
+    textarea.disabled = true;
+    textarea.value = '';
+    state.input = '';
+    writeCodeQaState(state);
+    if (annotations.length) clearTaskAnnotationsForLocation(locationKey);
+    const messageCount = thread.querySelectorAll('.explain-message').length;
+    try {
+      await runExplanationTurn({
+        state,
+        thread,
+        selection:draft.quote,
+        question,
+        target:selectedCodeTarget(draft),
+        displayQuestion:rawQuestion || '请处理这些注释',
+        annotationCount:annotations.length
+      });
+    } catch (_) {
+      const failedMessages = [...thread.querySelectorAll('.explain-message')].slice(messageCount);
+      const errorMessage = failedMessages.find(message => message.classList.contains('error'));
+      if (errorMessage) {
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'explain-retry';
+        retry.textContent = '重新发送';
+        retry.addEventListener('click', () => {
+          if (busy) return;
+          failedMessages.forEach(message => message.remove());
+          const latest = state.history[state.history.length - 1];
+          if (latest?.role === 'user' && latest.content === question) {
+            state.history = state.history.slice(0, -1);
+            writeCodeQaState(state);
+          }
+          submitQuestion(rawQuestion, annotations);
+        });
+        errorMessage.appendChild(retry);
+      }
+    } finally {
+      busy = false;
+      send.disabled = false;
+      textarea.disabled = false;
+      textarea.focus();
+    }
+  };
+
+  const ask = () => {
+    const annotations = taskAnnotationsForLocation(locationKey);
+    const rawQuestion = textarea.value.trim();
+    if ((!rawQuestion && !annotations.length) || busy) return;
+    submitQuestion(rawQuestion, annotations);
+  };
+
+  send.addEventListener('click', ask);
+  textarea.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' || event.metaKey || event.shiftKey) return;
+    event.preventDefault();
+    ask();
+  });
+  requestAnimationFrame(renderTaskAnnotations);
+  textarea.focus();
+}
+
+function restoreCodeQa(locationKey=null) {
+  const state = readCodeQaState(locationKey);
+  if (!state?.target || !state.quote) return;
+  const chapterIndex = chapters.findIndex(item => item.id === state.chapterId);
+  if (state.view === 'guided' && chapterIndex >= 0) {
+    activeChapterIndex = chapterIndex;
+    const stepIndex = chapters[chapterIndex].steps.findIndex(item => item.id === state.stepId);
+    activeStepIndex = stepIndex >= 0 ? stepIndex : 0;
+    returnView = 'overview';
+    showView('guided');
+  } else {
+    showView('full');
+  }
+  const root = activeView === 'guided' ? document.getElementById('guided-code') : fullDiffs;
+  const fileKeyValue = `${state.target.repoId}:${state.target.path}`;
+  const card = root.querySelector(`.file-card[data-file-key="${CSS.escape(fileKeyValue)}"]`);
+  if (!card) return;
+  const lines = [...card.querySelectorAll('.line')];
+  const start = lines.findIndex(line => line.dataset.anchor === state.target.startAnchor);
+  const end = lines.findIndex(line => line.dataset.anchor === state.target.endAnchor);
+  if (start < 0 || end < start) return;
+  lines.slice(start, end + 1).forEach(line => line.classList.add('selected'));
+  explainTextSelection({
+    card,
+    lines,
+    start,
+    end,
+    startOffset:Number(state.target.startOffset || 0),
+    endOffset:Number(state.target.endOffset || 0),
+    quote:state.quote
+  }, state);
+  activeExplainBox?.scrollIntoView({block:'center'});
+  requestAnimationFrame(renderTaskAnnotations);
 }
 
 function openLineComment(line, card, extend) {
@@ -1246,7 +2253,7 @@ function renderInlineComments() {
         });
         view.appendChild(replies);
       }
-      targetLine.insertAdjacentElement('afterend', view);
+      insertCodeAffordance(targetLine, view, 2);
     });
   });
 }
@@ -1558,70 +2565,6 @@ async function loadSemanticReferences(identifier) {
   return {context, payload:await semanticReferenceCache.get(cacheKey)};
 }
 
-function identifiersAt(repoId, path, line, column) {
-  const selector = [
-    `.file-card[data-repo-id="${CSS.escape(repoId)}"]`,
-    `[data-path="${CSS.escape(path)}"]`,
-    ` .line[data-new-line="${Number(line)}"]`,
-    ` .code-identifier[data-column="${Number(column)}"]`
-  ].join('');
-  return [...document.querySelectorAll(selector)];
-}
-
-function clearSemanticHighlight(force=false) {
-  clearTimeout(semanticHoverTimer);
-  clearTimeout(semanticClearTimer);
-  if (semanticHighlightLocked && !force) return;
-  document.querySelectorAll('.semantic-reference-match,.semantic-reference-origin').forEach(node => {
-    node.classList.remove('semantic-reference-match', 'semantic-reference-origin');
-  });
-  semanticHighlightOrigin = null;
-  if (force) semanticHighlightLocked = false;
-}
-
-function highlightSemanticReferences(identifier, result, locked=false) {
-  clearSemanticHighlight(true);
-  const {context, payload} = result;
-  const locations = [
-    {path:context.path, line:context.lineNumber, column:context.column, origin:true},
-    ...(Array.isArray(payload.references) ? payload.references : [])
-  ];
-  locations.forEach(location => {
-    identifiersAt(context.repoId, location.path, location.line, location.column).forEach(node => {
-      node.classList.add('semantic-reference-match');
-      if (location.origin) node.classList.add('semantic-reference-origin');
-    });
-  });
-  semanticHighlightOrigin = identifier;
-  semanticHighlightLocked = locked;
-}
-
-function scheduleSemanticHighlight(identifier) {
-  if (semanticHighlightLocked || !semanticReferenceContext(identifier)) return;
-  clearTimeout(semanticHoverTimer);
-  clearTimeout(semanticClearTimer);
-  semanticHoverTimer = setTimeout(async () => {
-    try {
-      const result = await loadSemanticReferences(identifier);
-      if (result && !semanticHighlightLocked) highlightSemanticReferences(identifier, result, false);
-    } catch (_) {
-      clearSemanticHighlight();
-    }
-  }, 180);
-}
-
-function scheduleSemanticHighlightClear() {
-  if (semanticHighlightLocked) return;
-  clearTimeout(semanticHoverTimer);
-  clearTimeout(semanticClearTimer);
-  semanticClearTimer = setTimeout(() => clearSemanticHighlight(), 120);
-}
-
-async function lockSemanticHighlight(identifier) {
-  const result = await loadSemanticReferences(identifier);
-  if (result) highlightSemanticReferences(identifier, result, true);
-}
-
 function showReferenceStatus(symbol, message, error=false) {
   referenceTitle.textContent = symbol ? `${symbol} · 查看引用` : '查看引用';
   referenceContent.replaceChildren();
@@ -1756,23 +2699,35 @@ async function completeReview() {
 }
 
 document.addEventListener('contextmenu', event => {
-  if (!event.target.closest('.diff')) return;
-  const captured = captureTextSelection();
+  if (!event.target.closest('.diff,.explain-message')) return;
+  const captured = captureTaskSelection() || pendingTextSelection;
   if (!captured) return;
+  const targetCard = event.target.closest('.file-card');
+  if (targetCard && captured.kind === 'code' && captured.card !== targetCard) return;
   event.preventDefault();
   pendingTextSelection = captured;
-  selectionMenu.style.left = `${Math.min(event.clientX, window.innerWidth - 110)}px`;
+  highlightPageTextMatches(captured.quote, captured);
+  selectionMenu.querySelector('[data-action="comment"]').classList.toggle('hidden', captured.kind !== 'code');
+  selectionMenu.querySelector('[data-action="task"]').classList.toggle('hidden', captured.kind !== 'qa');
+  selectionMenu.querySelector('[data-action="explain"]').classList.toggle('hidden', captured.kind !== 'code');
+  selectionMenu.style.left = `${Math.min(event.clientX, window.innerWidth - 230)}px`;
   selectionMenu.style.top = `${Math.min(event.clientY, window.innerHeight - 50)}px`;
   selectionMenu.classList.add('visible');
 });
 
 document.addEventListener('mouseup', event => {
-  if (event.button !== 0 || !event.target.closest('.diff')) return;
+  if (event.button !== 0 || event.target.closest('.selection-menu,.task-composer,.comment-composer')) return;
   setTimeout(() => {
-    const captured = captureTextSelection();
-    if (!captured) return;
+    const captured = event.target.closest('.diff,.explain-message')
+      ? captureTaskSelection()
+      : null;
+    if (!captured) {
+      pendingTextSelection = null;
+      clearTextMatches();
+      return;
+    }
     pendingTextSelection = captured;
-    showSelectionMenu(captured.rect);
+    highlightPageTextMatches(captured.quote, captured);
   }, 0);
 });
 
@@ -1785,29 +2740,39 @@ document.addEventListener('click', event => {
     return;
   }
   const identifier = event.target.closest('.code-identifier');
-  if (identifier && semanticEnabled && !window.getSelection()?.toString()) {
-    if (event.metaKey) queryReferences(event);
-    else lockSemanticHighlight(identifier).catch(() => clearSemanticHighlight(true));
+  if (
+    identifier
+    && semanticEnabled
+    && event.metaKey
+    && !window.getSelection()?.toString()
+  ) {
+    queryReferences(event);
     return;
   }
-  if (!event.target.closest('.reference-popover')) clearSemanticHighlight(true);
 });
 
-document.addEventListener('mouseover', event => {
-  const identifier = event.target.closest('.code-identifier');
-  if (identifier) scheduleSemanticHighlight(identifier);
-});
-
-document.addEventListener('mouseout', event => {
-  if (event.target.closest('.code-identifier')) scheduleSemanticHighlightClear();
-});
-
-selectionMenu.querySelector('button').addEventListener('click', () => {
+selectionMenu.addEventListener('click', event => {
+  const action = event.target.closest('button')?.dataset.action;
   if (!pendingTextSelection) return;
   hideSelectionMenu();
-  openTextComment(pendingTextSelection);
+  if (action === 'comment' && pendingTextSelection.kind === 'code') openTextComment(pendingTextSelection);
+  if (action === 'task' && pendingTextSelection.kind === 'qa') addTaskAnnotation(pendingTextSelection);
+  if (action === 'explain' && pendingTextSelection.kind === 'code') explainTextSelection(pendingTextSelection);
   window.getSelection()?.removeAllRanges();
 });
+
+taskPrompt.addEventListener('keydown', event => {
+  if (event.isComposing) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    cancelTaskAnnotation();
+    return;
+  }
+  if (event.key !== 'Enter' || event.metaKey || event.shiftKey) return;
+  event.preventDefault();
+  saveTaskAnnotation();
+});
+window.addEventListener('resize', renderTaskAnnotations);
 
 document.addEventListener('mousedown', event => {
   if (!selectionMenu.contains(event.target)) hideSelectionMenu();
@@ -1904,13 +2869,14 @@ document.addEventListener('keydown', event => {
     hideSelectionMenu();
     closeCommentsPopover();
     closeReferencePopover();
-    clearComposer();
-    clearSemanticHighlight(true);
+    clearComposer({force:true, clearDraft:true});
+    clearTextMatches();
   }
 });
 document.addEventListener('scroll', hideSelectionMenu, true);
 window.addEventListener('resize', () => {
   hideSelectionMenu();
+  clearTextMatches();
   closeCommentsPopover();
   closeReferencePopover();
 });
@@ -1924,10 +2890,12 @@ function initialize() {
   renderFullDiffGroups();
   renderOverview();
   renderComments();
+  renderTaskAnnotations();
+  restoreCodeQa();
   completeReviewButton.disabled = helper.mode !== 'local' || !helper.agentBound;
   if (helper.mode !== 'local') {
     completeReviewButton.title = helper.error || 'Easy CR 评论服务未连接';
-    setSaveState('error', '服务未连接 · 评论尚未写入 HTML');
+    setSaveState('error', '评论服务未连接');
   } else if (!helper.agentBound) {
     completeReviewButton.title = '该报告未绑定生成它的 Agent';
     setSaveState('', '');
@@ -1935,9 +2903,9 @@ function initialize() {
     setSaveState('', '');
   }
   if (helper.mode === 'local' && commentWritePending) {
-    setSaveState('', '正在把待写入草稿保存到 HTML…');
+    setSaveState('', '正在保存待写入草稿…');
     writeCommentsToHtml().catch(error => {
-      setSaveState('error', `${error.message} · 评论尚未写入 HTML`);
+      setSaveState('error', `${error.message} · 评论保存失败`);
     });
   }
 }

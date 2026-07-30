@@ -50,24 +50,30 @@ When `easy-cr` is not installed yet, run `python3 "${SKILL_DIR}/../../scripts/in
    - Keep test-file diffs out of chapter guidance; they remain available in complete Diff.
    - Dependency files and pure import-only changes stay in complete Diff.
    - Do not create a catch-all “补充其他改动” chapter. If production Diff cannot be mapped to a business chapter, stop and fix the manifest.
-6. Render:
+6. Create one review directory for this technical plan:
+   - Use `.codex-artifacts/YYYY-MM-DD-<manifest subject>/`; `subject` is the actual technical-plan name, so different plans use different directories.
+   - Keep its manifest at `manifest.json` and its report at `review.html`.
+   - Sanitize path separators and punctuation in the technical-plan title, but keep readable Chinese text.
+   - Regenerate feedback rounds into the same directory and `review.html` path so historical comments remain attached.
+7. Render:
 
 ```bash
 python3 "${SKILL_DIR}/scripts/build_review.py" \
-  --manifest /absolute/path/to/review-manifest.json \
-  --output /absolute/path/to/repo/.codex-artifacts/review-<short-id>.html
+  --manifest /absolute/path/to/repo/.codex-artifacts/YYYY-MM-DD-技术方案名称/manifest.json
 ```
 
-For a legacy v1 manifest, also pass `--repo`, `--base`, and `--head`.
+The renderer defaults to `.codex-artifacts/YYYY-MM-DD-技术方案名称/review.html`. Pass
+`--output` only when regenerating a known historical path or supporting a legacy
+workflow. For a legacy v1 manifest, also pass `--repo`, `--base`, and `--head`.
 
-7. Validate:
+8. Validate:
    - No unresolved `@@TOKEN@@`.
    - Inline JavaScript compiles with `new Function(...)`.
    - Business stages read smoothly from top to bottom.
    - Do not stage or commit review artifacts unless requested.
-8. Open the HTML and return a clickable absolute path.
-9. The report uses the single Easy CR helper at `127.0.0.1:64346` to persist comments into the current HTML. The top-right `发送评论给 AI` button sends only `pending` comments, marks them `processing`, and resumes the originating Codex/Claude session with the batch id.
-10. When an Agent receives an Easy CR comment batch, run:
+9. Open the HTML and return a clickable absolute path.
+10. The report uses the single Easy CR helper at `127.0.0.1:64346` to persist comments into the current HTML. The top-right `发送评论给 AI` button sends only `pending` comments, marks them `processing`, and resumes the originating Codex/Claude session with the batch id.
+11. When an Agent receives an Easy CR comment batch, run:
 
 ```bash
 easy-cr comments /absolute/path/to/review.html --json
@@ -79,13 +85,13 @@ Before editing code, classify the whole batch:
 
 - If any comment is a question, discussion, confirmation request, non-code request, or a point the Agent disagrees with, do not change code yet. Present every such item together, wait for the user to confirm, then process the batch as one unit.
 - Otherwise implement all actionable comments, validate the result, and regenerate the same report path so historical comments remain attached.
-- After the batch is fully handled, including agreed no-code outcomes, mark only that batch resolved:
+- After the batch is fully handled, including agreed no-code outcomes, reply with the processing result and mark only that batch resolved:
 
 ```bash
-easy-cr comments /absolute/path/to/review.html --resolve-batch <batch-id>
+easy-cr comments /absolute/path/to/review.html --resolve-batch <batch-id> --reply "处理结果：..."
 ```
 
-Do not mark a batch resolved before implementation, validation, and report regeneration are complete.
+Do not mark a batch resolved before implementation, validation, and report regeneration are complete. The reply should state what changed, what was confirmed as no-code, or why no change was needed.
 
 The executable persistence, batch, regeneration, and failure contracts are defined in [references/review-lifecycle.md](references/review-lifecycle.md).
 
@@ -97,15 +103,19 @@ The base HTML always supports:
 - Pre-generated goal, decision, result, explanation, and code annotations.
 - Diff filtering, search and folding.
 - Dark/light themes.
-- Document, chapter, selected-text and line comments.
-- Left-selection and right-click comments, including selections that cross the line-number gutter.
+- Document, chapter, selected-code and line comments.
+- Selecting code leaves the original browser selection unchanged and highlights only other exact repeated text on the current page. The repeated-text highlights clear as soon as the selection is cancelled. Right-click exposes `评论` and `不懂就问`, including selections that cross the line-number gutter.
+- Selecting text inside a `不懂就问` conversation exposes only `添加到任务`. It opens a compact annotation input beside the selection: Enter saves and closes it, Command+Enter and Shift+Enter insert newlines, and Escape cancels. Saved annotations use persistent Codex-style blue comment-bubble numbers at the source text; clicking a number reopens that annotation for editing, and adding another annotation does not hide existing numbers. The matching Q&A composer summarizes them with an `N 条注释` chip whose hover card shows selected text and user notes. The existing `不懂就问` send action submits annotations with the current question while rendering only the count chip and question body, not expanded annotation details. Source numbers and the composer chip clear immediately when the request starts. A failed request keeps the compact sent message and exposes a retry action. Saving never sends, never wakes the report-generating task, and never creates or mutates report comments.
+- Selected-code `不懂就问` opens an inline code Q&A box below the code. The reviewer asks the first question before any request is sent and can continue with follow-up questions; answers stream in place. One technical-plan directory reuses one read-only explanation session, and questions for that plan are processed FIFO. The page keeps a separate visible Q&A history for each selected code location in browser session storage keyed by `reportId`, so switching locations does not mix their panels and a refresh restores them; regenerated reports do not migrate the browser state. The left caret toggles collapse state and there is no close action.
 - Comment edit, delete, reply, resolve, summary popover and copy.
 - Persistence into the current HTML through the single local Easy CR helper, with a local pending draft while the service is unavailable.
 - No reviewed-copy export and no browser file picker.
 - Comment status follows `未处理 → 处理中 → 已解决`; edit, reply, or reopen returns a comment to `未处理`.
+- When an Agent resolves a sent batch, it writes an AI reply on each resolved comment with the processing result.
 - A top-right `发送评论给 AI` action sends only unprocessed comments. It shows a green success check briefly after synchronous acceptance.
 - Regeneration preserves historical comments. Exact anchors are retained when possible; otherwise code comments move near matching code in the same file. Deleted files safely no-op.
 - Previously reviewed additions use light green, current feedback changes use deep green, and deletions use light red.
+- The report header explains all code colors: additions, feedback changes, deletions, peer-step changes, and comment locations.
 - Previous and next navigation both name their destination; the outer edges return to the chapter overview.
 - `Enter` saves; `Command+Enter` and `Shift+Enter` insert a newline.
 
@@ -123,7 +133,7 @@ When no editor is configured, the page contains no editor token or endpoint and 
 
 - Enhanced editors are selected from the built-in registry: `goland`, `idea`, and `vscode`.
 - Do not start `gopls`, MCP, or per-report background processes. All reports reuse the one LaunchAgent-managed Easy CR helper.
-- Do not add browser-time AI calls; all explanations are generated before the HTML is written.
+- Browser-time AI is limited to selected-code Q&A through the local helper; it must not modify files or comment state. Business-step explanations are still generated before the HTML is written.
 - Do not infer online behavior from code alone.
 - Do not organize the main review by technical layer or directory.
 - Keep precise same-page semantic identifier highlighting on hold unless the user explicitly reopens that scope.

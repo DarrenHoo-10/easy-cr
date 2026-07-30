@@ -58,7 +58,7 @@ from review_comments import (
 )
 
 
-VERSION = "1.4.2"
+VERSION = "1.4.3"
 SKILL_DIR = SCRIPT_DIR.parent
 REPO_ROOT = SKILL_DIR.parents[1]
 SETUP_JETBRAINS_SCRIPT = SCRIPT_DIR / "setup_jetbrains_plugin.py"
@@ -134,6 +134,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     comments_parser.add_argument(
         "--resolve-batch",
         help="将指定 AI 处理批次中的评论标记为已解决",
+    )
+    comments_parser.add_argument(
+        "--reply",
+        help="解决批次时写入每条评论的 AI 处理结果回复",
     )
 
     args = parser.parse_args(argv)
@@ -986,7 +990,11 @@ def main(argv: list[str] | None = None) -> int:
             source = args.report.read_text()
             payload = extract_comments(source)
             if args.resolve_batch:
-                payload = mark_batch_resolved(payload, args.resolve_batch)
+                payload = mark_batch_resolved(
+                    payload,
+                    args.resolve_batch,
+                    args.reply,
+                )
                 atomic_write_text(
                     args.report,
                     replace_comments_block(source, payload),

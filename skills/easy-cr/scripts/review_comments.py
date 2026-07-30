@@ -157,17 +157,26 @@ def comments_markdown(payload: dict[str, Any], subject: str = "Easy CR") -> str:
 def mark_batch_resolved(
     payload: dict[str, Any],
     batch_id: str,
+    reply_body: str | None = None,
 ) -> dict[str, Any]:
     if not isinstance(batch_id, str) or not batch_id.strip():
         raise ValueError("Easy CR aiBatchId must be a non-empty string")
     updated = _validate_payload(payload)
     matched = False
     resolved_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    reply_text = (reply_body or "AI 已处理本条评论。").strip()
     for comment in updated["comments"]:
         if (
             comment.get("aiBatchId") == batch_id
             and comment["status"] == "processing"
         ):
+            comment.setdefault("replies", []).append({
+                "id": f"reply-ai-{batch_id}-{len(comment.get('replies') or []) + 1}",
+                "body": reply_text,
+                "author": "ai",
+                "createdAt": resolved_at,
+                "updatedAt": None,
+            })
             comment["status"] = "resolved"
             comment["resolvedAt"] = resolved_at
             matched = True
