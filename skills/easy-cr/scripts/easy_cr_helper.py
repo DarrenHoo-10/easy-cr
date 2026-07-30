@@ -413,6 +413,33 @@ def explanation_command(
         executable = codex_command or (
             Path(detected) if detected else CODEX_APP_COMMAND
         )
+        explanation_session_id = str(
+            agent.get("explanationSessionId") or ""
+        ).strip()
+        if explanation_session_id:
+            return [
+                str(executable),
+                "exec",
+                "resume",
+                "--skip-git-repo-check",
+                "--json",
+                explanation_session_id,
+                prompt,
+            ]
+        source_session_id = str(
+            agent.get("sourceSessionId") or agent.get("sessionId") or ""
+        ).strip()
+        if source_session_id:
+            return [
+                str(executable),
+                "exec",
+                "resume",
+                "--ephemeral",
+                "--skip-git-repo-check",
+                "--json",
+                source_session_id,
+                prompt,
+            ]
         return [
             str(executable),
             "exec",
@@ -430,6 +457,37 @@ def explanation_command(
         executable = claude_command or (Path(detected) if detected else None)
         if executable is None:
             raise RuntimeError("未找到 Claude Code CLI")
+        explanation_session_id = str(
+            agent.get("explanationSessionId") or ""
+        ).strip()
+        if explanation_session_id:
+            return [
+                str(executable),
+                "--resume",
+                explanation_session_id,
+                "--print",
+                "--permission-mode",
+                "dontAsk",
+                prompt,
+            ]
+        source_session_id = str(
+            agent.get("sourceSessionId") or agent.get("sessionId") or ""
+        ).strip()
+        if source_session_id:
+            explanation_session_id = str(uuid.uuid4())
+            agent["explanationSessionId"] = explanation_session_id
+            return [
+                str(executable),
+                "--resume",
+                source_session_id,
+                "--fork-session",
+                "--session-id",
+                explanation_session_id,
+                "--print",
+                "--permission-mode",
+                "dontAsk",
+                prompt,
+            ]
         return [
             str(executable),
             "--print",
@@ -438,6 +496,218 @@ def explanation_command(
             prompt,
         ]
     raise RuntimeError("报告未绑定可解释代码的 Agent")
+
+
+def _write_app_server_message(
+    process: subprocess.Popen[str],
+    payload: dict[str, Any],
+) -> None:
+    if process.stdin is None:
+        raise RuntimeError("Codex App Server 输入流不可用")
+    process.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    process.stdin.flush()
+
+
+def _read_app_server_message(
+    process: subprocess.Popen[str],
+) -> dict[str, Any]:
+    if process.stdout is None:
+        raise RuntimeError("Codex App Server 输出流不可用")
+    while True:
+        line = process.stdout.readline()
+        if not line:
+            status = process.poll()
+            suffix = f"（exit {status}）" if status is not None else ""
+            raise RuntimeError(f"Codex App Server 提前结束{suffix}")
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+
+
+def _app_server_response(
+    process: subprocess.Popen[str],
+    request_id: int,
+) -> dict[str, Any]:
+    while True:
+        payload = _read_app_server_message(process)
+        if payload.get("id") != request_id:
+            continue
+        error = payload.get("error")
+        if isinstance(error, dict):
+            raise RuntimeError(
+                str(error.get("message") or "Codex App Server 请求失败")
+            )
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            raise RuntimeError("Codex App Server 返回格式无效")
+        return result
+
+
+def _codex_app_server_explainer(
+    agent: dict[str, Any],
+    report_path: Path,
+    prompt: str,
+    *,
+    codex_command: Path | None = None,
+) -> Iterable[str]:
+    detected = shutil.which("codex")
+    executable = codex_command or (
+        Path(detected) if detected else CODEX_APP_COMMAND
+    )
+    if not executable.is_file():
+        raise RuntimeError(f"未找到 Agent CLI：{executable}")
+    cwd = Path(str(agent.get("cwd") or report_path.parent)).resolve()
+    process = subprocess.Popen(
+        [str(executable), "app-server", "--stdio"],
+        cwd=cwd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        bufsize=1,
+    )
+    emitted = False
+    completed_answer = ""
+    try:
+        _write_app_server_message(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {
+                        "name": "easy-cr",
+                        "version": "1",
+                    },
+                    "capabilities": {"experimentalApi": True},
+                },
+            },
+        )
+        _app_server_response(process, 1)
+        _write_app_server_message(
+            process,
+            {"jsonrpc": "2.0", "method": "initialized"},
+        )
+        explanation_session_id = str(
+            agent.get("explanationSessionId") or ""
+        ).strip()
+        if explanation_session_id:
+            thread_method = "thread/resume"
+            thread_params = {
+                "threadId": explanation_session_id,
+                "cwd": str(cwd),
+                "approvalPolicy": "never",
+                "sandbox": "read-only",
+            }
+        else:
+            source_session_id = str(
+                agent.get("sourceSessionId") or agent.get("sessionId") or ""
+            ).strip()
+            if not source_session_id:
+                raise RuntimeError("报告未绑定可继承上下文的 Codex 任务")
+            thread_method = "thread/fork"
+            thread_params = {
+                "threadId": source_session_id,
+                "cwd": str(cwd),
+                "approvalPolicy": "never",
+                "sandbox": "read-only",
+                "ephemeral": False,
+                "baseInstructions": (
+                    "你是 Easy CR 的代码解释助手。只回答评审者针对所选代码"
+                    "提出的问题；可以结合继承的技术方案和项目上下文解释，"
+                    "但不要修改文件，也不要调用工具。"
+                ),
+            }
+        _write_app_server_message(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": thread_method,
+                "params": thread_params,
+            },
+        )
+        thread_result = _app_server_response(process, 2)
+        thread = thread_result.get("thread")
+        thread_id = str(thread.get("id") or "") if isinstance(thread, dict) else ""
+        if not thread_id:
+            raise RuntimeError("Codex App Server 未返回 threadId")
+        agent["explanationSessionId"] = thread_id
+        _write_app_server_message(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "turn/start",
+                "params": {
+                    "threadId": thread_id,
+                    "input": [{"type": "text", "text": prompt}],
+                    "approvalPolicy": "never",
+                },
+            },
+        )
+        turn_result = _app_server_response(process, 3)
+        turn = turn_result.get("turn")
+        turn_id = str(turn.get("id") or "") if isinstance(turn, dict) else ""
+        if not turn_id:
+            raise RuntimeError("Codex App Server 未返回 turnId")
+
+        while True:
+            payload = _read_app_server_message(process)
+            method = payload.get("method")
+            params = payload.get("params")
+            if not isinstance(params, dict):
+                continue
+            if (
+                params.get("threadId") != thread_id
+                or params.get("turnId", turn_id) != turn_id
+            ):
+                continue
+            if method == "item/agentMessage/delta":
+                delta = params.get("delta")
+                if isinstance(delta, str) and delta:
+                    emitted = True
+                    yield delta
+                continue
+            if method == "item/completed":
+                item = params.get("item")
+                if (
+                    isinstance(item, dict)
+                    and item.get("type") == "agentMessage"
+                    and isinstance(item.get("text"), str)
+                ):
+                    completed_answer = item["text"]
+                continue
+            if method != "turn/completed":
+                continue
+            completed_turn = params.get("turn")
+            status = (
+                completed_turn.get("status")
+                if isinstance(completed_turn, dict)
+                else None
+            )
+            if status != "completed":
+                error = (
+                    completed_turn.get("error")
+                    if isinstance(completed_turn, dict)
+                    else None
+                )
+                message = (
+                    error.get("message")
+                    if isinstance(error, dict)
+                    else "unknown-error"
+                )
+                raise RuntimeError(f"AI 回答生成失败：{message}")
+            if not emitted and completed_answer:
+                yield completed_answer
+            break
+    finally:
+        if process.poll() is None:
+            process.kill()
 
 
 def _default_explainer(
@@ -452,19 +722,52 @@ def _default_explainer(
     history = raw_history if isinstance(raw_history, list) else []
     subject = str(agent.get("reportSubject") or report_path.stem)
     prompt = explanation_prompt(subject, selection, target, question, history)
+    if agent.get("client") == "codex":
+        for attempt in range(2):
+            emitted = False
+            try:
+                for chunk in _codex_app_server_explainer(
+                    agent,
+                    report_path,
+                    prompt,
+                ):
+                    emitted = True
+                    yield chunk
+                return
+            except RuntimeError:
+                if emitted:
+                    raise
+                if attempt == 0 and agent.get("explanationSessionId"):
+                    agent.pop("explanationSessionId", None)
+                    continue
+                break
+    previous_session_id = str(
+        agent.get("explanationSessionId") or ""
+    ).strip()
     arguments = explanation_command(agent, report_path, prompt)
+    created_session = (
+        not previous_session_id
+        and bool(str(agent.get("explanationSessionId") or "").strip())
+    )
     if not Path(arguments[0]).is_file():
+        if created_session:
+            agent.pop("explanationSessionId", None)
         raise RuntimeError(f"未找到 Agent CLI：{arguments[0]}")
     cwd = Path(str(agent.get("cwd") or report_path.parent)).resolve()
-    process = subprocess.Popen(
-        arguments,
-        cwd=cwd,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-    )
+    try:
+        process = subprocess.Popen(
+            arguments,
+            cwd=cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+    except Exception:
+        if created_session:
+            agent.pop("explanationSessionId", None)
+        raise
     assert process.stdout is not None
     diagnostics: list[str] = []
     try:
@@ -490,6 +793,8 @@ def _default_explainer(
                 yield item["text"]
         status = process.wait(timeout=5)
         if status:
+            if created_session:
+                agent.pop("explanationSessionId", None)
             detail = "；".join(value for value in diagnostics if value)
             suffix = f"：{detail}" if detail else ""
             raise RuntimeError(f"AI 回答生成失败（exit {status}）{suffix}")
@@ -683,6 +988,7 @@ class HelperStore:
         self.client_opener = client_opener
         self.explainer = explainer
         self.lock = threading.RLock()
+        self.explanation_locks: dict[str, threading.Lock] = {}
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.config_dir.chmod(0o700)
 
@@ -690,13 +996,33 @@ class HelperStore:
         try:
             payload = json.loads(self.registry_path.read_text())
         except FileNotFoundError:
-            return {"version": 1, "reports": {}}
+            return {
+                "version": 1,
+                "reports": {},
+                "explanationSessions": {},
+            }
         if not isinstance(payload, dict) or not isinstance(payload.get("reports"), dict):
             raise ValueError("Easy CR helper registry 无效")
+        sessions = payload.get("explanationSessions")
+        if sessions is None:
+            payload["explanationSessions"] = {}
+        elif not isinstance(sessions, dict):
+            raise ValueError("Easy CR helper 解释会话注册表无效")
         return payload
 
     def _save(self, payload: dict[str, Any]) -> None:
         _atomic_write_json(self.registry_path, payload)
+
+    @staticmethod
+    def _review_key(path: Path) -> str:
+        return hashlib.sha256(str(path.parent).encode()).hexdigest()
+
+    def _explanation_lock(self, review_key: str) -> threading.Lock:
+        with self.lock:
+            return self.explanation_locks.setdefault(
+                review_key,
+                threading.Lock(),
+            )
 
     @staticmethod
     def _allowed_report(path: Path, roots: list[Path]) -> bool:
@@ -748,12 +1074,14 @@ class HelperStore:
             registry = self._load()
             existing = registry["reports"].get(report_id) or {}
             report_token = existing.get("reportToken") or secrets.token_urlsafe(32)
+            review_key = self._review_key(path)
             registry["reports"][report_id] = {
                 "path": str(path),
                 "repositoryRoots": [str(root) for root in roots],
                 "reportToken": report_token,
                 "agent": agent,
                 "subject": subject.strip() if isinstance(subject, str) else path.stem,
+                "reviewKey": review_key,
                 "completion": None,
                 "updatedAt": time.time(),
             }
@@ -872,14 +1200,67 @@ class HelperStore:
             registry = self._load()
             entry = self._entry(registry, report_id, token)
             path = Path(entry["path"]).resolve()
-            agent = entry.get("agent")
-            if not isinstance(agent, dict):
-                raise ValueError("该报告未绑定生成它的 Agent")
-            explain_agent = {
-                **agent,
-                "reportSubject": str(entry.get("subject") or path.stem),
-            }
-        return self.explainer(explain_agent, path, request)
+            review_key = str(
+                entry.get("reviewKey") or self._review_key(path)
+            )
+        plan_lock = self._explanation_lock(review_key)
+
+        def stream() -> Iterable[str]:
+            with plan_lock:
+                with self.lock:
+                    registry = self._load()
+                    entry = self._entry(registry, report_id, token)
+                    path = Path(entry["path"]).resolve()
+                    agent = entry.get("agent")
+                    if not isinstance(agent, dict):
+                        raise ValueError("该报告未绑定生成它的 Agent")
+                    sessions = registry["explanationSessions"]
+                    session = sessions.get(review_key)
+                    if not isinstance(session, dict):
+                        session = {}
+                    if session.get("client") not in {None, agent.get("client")}:
+                        session = {}
+                    previous_session_id = str(
+                        session.get("sessionId") or ""
+                    ).strip()
+                    explain_agent = {
+                        **agent,
+                        "sourceSessionId": str(agent.get("sessionId") or ""),
+                        "explanationSessionId": previous_session_id,
+                        "reportSubject": str(
+                            entry.get("subject") or path.stem
+                        ),
+                        "reviewKey": review_key,
+                    }
+                try:
+                    yield from self.explainer(
+                        explain_agent,
+                        path,
+                        request,
+                    )
+                finally:
+                    current_session_id = str(
+                        explain_agent.get("explanationSessionId") or ""
+                    ).strip()
+                    if current_session_id != previous_session_id:
+                        with self.lock:
+                            registry = self._load()
+                            sessions = registry["explanationSessions"]
+                            if current_session_id:
+                                sessions[review_key] = {
+                                    "client": explain_agent.get("client"),
+                                    "sourceSessionId": explain_agent.get(
+                                        "sourceSessionId"
+                                    ),
+                                    "sessionId": current_session_id,
+                                    "reportDirectory": str(path.parent),
+                                    "updatedAt": time.time(),
+                                }
+                            else:
+                                sessions.pop(review_key, None)
+                            self._save(registry)
+
+        return stream()
 
     def complete_review(
         self,

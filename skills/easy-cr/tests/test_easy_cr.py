@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import hashlib
+import io
 import json
 import os
 import re
@@ -461,6 +462,78 @@ class TemplateContractTest(unittest.TestCase):
         self.assertIn("selection-text-match", template)
         self.assertIn("highlightPageTextMatches", template)
         self.assertIn('data-action="explain"', template)
+        self.assertIn('data-action="task"', template)
+        self.assertIn('data-action="comment"', template)
+        self.assertIn("openTextComment", template)
+        self.assertIn("captured.kind !== 'code'", template)
+        self.assertIn("captured.kind !== 'qa'", template)
+        self.assertIn(
+            """selectionMenu.querySelector('[data-action="explain"]').classList.toggle('hidden', captured.kind !== 'code')""",
+            template,
+        )
+        self.assertIn("pendingTextSelection.kind === 'code'", template)
+        self.assertIn("pendingTextSelection.kind === 'qa'", template)
+        self.assertIn("annotation?.target?.targetType === 'qa'", template)
+        self.assertIn("添加到任务", template)
+        self.assertIn('id="task-composer"', template)
+        self.assertIn('placeholder="添加可选评论…"', template)
+        self.assertNotIn('id="task-annotation-list"', template)
+        self.assertNotIn('id="task-send"', template)
+        self.assertIn("taskDraftStorageKey", template)
+        self.assertIn("addTaskAnnotation", template)
+        self.assertIn("editTaskAnnotation", template)
+        self.assertIn("saveTaskAnnotation", template)
+        self.assertIn("cancelTaskAnnotation", template)
+        self.assertIn("renderTaskAnnotations", template)
+        self.assertIn("::highlight(task-annotations)", template)
+        self.assertIn("captureExplanationSelection", template)
+        self.assertIn("selectedTaskTarget", template)
+        self.assertIn("data-code-qa-location", template)
+        self.assertNotIn("askAboutExplanationSelection", template)
+        self.assertNotIn("/api/tasks/send", template)
+        self.assertIn("taskQuestion(prompt, annotations)", template)
+        self.assertIn("taskAnnotationsForLocation(locationKey)", template)
+        self.assertIn("clearTaskAnnotationsForLocation(locationKey)", template)
+        self.assertIn("runExplanationTurn", template)
+        self.assertIn("taskQuestion(rawQuestion, annotations)", template)
+        self.assertNotIn("sendTaskDraft", template)
+        self.assertIn("taskPrompt.addEventListener('keydown'", template)
+        task_keydown = template.split(
+            "taskPrompt.addEventListener('keydown'", 1
+        )[1].split("});", 1)[0]
+        self.assertIn("saveTaskAnnotation()", task_keydown)
+        self.assertIn("cancelTaskAnnotation()", task_keydown)
+        self.assertNotIn("task-composer-hint", template)
+        self.assertNotIn("task-voice", template)
+        self.assertIn("document.body.appendChild(pin)", template)
+        self.assertIn("pin.style.left = `${rect.right + window.scrollX}px`", template)
+        self.assertIn("pin.addEventListener('click', () => editTaskAnnotation(annotation))", template)
+        self.assertIn("function positionTaskComposer(rect)", template)
+        self.assertIn("let left = rect.right + scrollLeft + gap", template)
+        self.assertIn(".task-composer { position:absolute;", template)
+        self.assertIn("background:#1677ff", template)
+        self.assertIn("width:20px; height:20px", template)
+        self.assertIn(".task-annotation-pin span", template)
+        self.assertIn(".task-annotation-pin::before,.task-annotation-pin::after", template)
+        self.assertIn("border-radius:50%", template)
+        self.assertNotIn("rotate(-45deg)", template)
+        self.assertIn(".task-annotation-summary:hover .task-annotation-preview", template)
+        self.assertIn("所选文本：", template)
+        self.assertIn("用户评论：", template)
+        self.assertIn("清空本处注释", template)
+        self.assertIn("explain-annotation-count", template)
+        self.assertIn("displayQuestion:rawQuestion || '请处理这些注释'", template)
+        self.assertIn("annotationCount:annotations.length", template)
+        self.assertIn("retry.textContent = '重新发送'", template)
+        self.assertNotIn("restoreTaskAnnotations", template)
+        clear_index = template.index("clearTaskAnnotationsForLocation(locationKey);")
+        request_index = template.index("await runExplanationTurn({", clear_index)
+        self.assertLess(clear_index, request_index)
+        self.assertIn("overlapsSelection", template)
+        self.assertIn("if (!overlapsSelection) matches.push", template)
+        self.assertIn("function matchOverlapsCapturedSelection", template)
+        self.assertIn("highlightPageTextMatches(captured.quote, captured)", template)
+        self.assertIn("pendingTextSelection = null;", template)
         self.assertIn("explainTextSelection", template)
         self.assertIn("不懂就问", template)
         self.assertIn("针对这段代码问 AI", template)
@@ -468,6 +541,23 @@ class TemplateContractTest(unittest.TestCase):
         self.assertIn("codeQaStorageKey", template)
         self.assertIn("sessionStorage.setItem(codeQaStorageKey", template)
         self.assertIn("restoreCodeQa()", template)
+        self.assertIn("function codeQaLocationKey(target)", template)
+        self.assertIn("function readCodeQaStore()", template)
+        self.assertIn("threads:{[locationKey]:value}", template)
+        self.assertIn("readCodeQaState(locationKey)", template)
+        self.assertIn("store.threads[locationKey] = value", template)
+        self.assertIn("explain-waiting", template)
+        self.assertIn("appendChunk(decoder.decode", template)
+        self.assertIn("insertCodeAffordance(endLine, box, 0)", template)
+        self.assertIn("insertCodeAffordance(inlineAfter, composer, 1)", template)
+        self.assertIn("insertCodeAffordance(targetLine, view, 2)", template)
+        self.assertIn(".line.explain-target", template)
+        self.assertIn(".line.explain-target > span", template)
+        self.assertIn(".line.explain-target-start > span", template)
+        self.assertIn(".line.explain-target-end > span", template)
+        self.assertIn("setExplanationTargetHighlight(expanded)", template)
+        self.assertIn("setExplanationTargetHighlight(!state.collapsed)", template)
+        self.assertIn("activeExplainLines = draft.lines.slice", template)
         self.assertNotIn("localStorage.setItem(codeQaStorageKey", template)
         self.assertIn("class=\"explain-toggle\"", template)
         self.assertIn("aria-expanded", template)
@@ -510,7 +600,7 @@ class TemplateContractTest(unittest.TestCase):
         self.assertIn("评论后修改", template)
         self.assertIn("删除代码", template)
         self.assertIn("其他步骤改动", template)
-        self.assertIn("评论位置", template)
+        self.assertIn('legend-swatch comment"></i>评论位置', template)
         self.assertNotIn("CR 范围：@@SCOPE@@", template)
         self.assertIn('id="home-button"', template)
         self.assertIn("homeButton.addEventListener('click'", template)
@@ -560,14 +650,15 @@ class TemplateContractTest(unittest.TestCase):
             ),
         )
 
-    def test_guided_interactions_highlight_references_and_locate_comments(self):
+    def test_guided_interactions_keep_editor_navigation_command_only(self):
         template = TEMPLATE_PATH.read_text()
 
         self.assertIn(".step-button.active .step-number", template)
         self.assertIn("semanticReferenceCache", template)
-        self.assertIn("scheduleSemanticHighlight", template)
-        self.assertIn("lockSemanticHighlight", template)
-        self.assertIn("clearSemanticHighlight", template)
+        self.assertNotIn("scheduleSemanticHighlight", template)
+        self.assertNotIn("lockSemanticHighlight", template)
+        self.assertNotIn("semantic-reference-match", template)
+        self.assertIn("&& event.metaKey", template)
         self.assertIn("chapterCommentsFilter", template)
         self.assertIn("scheduleCommentsPopoverOpen(count", template)
         self.assertIn("item.addEventListener('click', () => focusComment(comment))", template)
@@ -1908,6 +1999,212 @@ class HelperServiceTest(unittest.TestCase):
         self.assertEqual(captured[0][2]["question"], "为什么直接返回？")
         self.assertEqual(captured[0][2]["history"][0]["role"], "user")
 
+    def test_explanation_session_is_reused_by_reports_in_same_plan_directory(self):
+        captured: list[dict] = []
+
+        def explain(agent: dict, _report_path: Path, request: dict):
+            captured.append({
+                "question": request["question"],
+                "sessionId": agent.get("explanationSessionId"),
+                "reviewKey": agent.get("reviewKey"),
+            })
+            if not agent.get("explanationSessionId"):
+                agent["explanationSessionId"] = "child-session"
+            return iter([request["question"]])
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            plan = root / "repo" / ".codex-artifacts" / "2026-07-30-帐期优化"
+            plan.mkdir(parents=True)
+            first_report = plan / "review.html"
+            second_report = plan / "review-regenerated.html"
+            first_report.write_text(
+                f"<html>{review_comments.empty_comments_block('report-1')}</html>"
+            )
+            second_report.write_text(
+                f"<html>{review_comments.empty_comments_block('report-2')}</html>"
+            )
+            store = easy_cr_helper.HelperStore(
+                root / "config",
+                explainer=explain,
+            )
+            common = {
+                "repositoryRoots": [str(root / "repo")],
+                "agent": {
+                    "client": "codex",
+                    "sessionId": "source-session",
+                    "cwd": str(root / "repo"),
+                },
+                "subject": "帐期优化",
+            }
+            first = store.register_report({
+                **common,
+                "reportId": "report-1",
+                "path": str(first_report),
+            })
+            second = store.register_report({
+                **common,
+                "reportId": "report-2",
+                "path": str(second_report),
+            })
+
+            list(store.explain_selection(
+                "report-1",
+                first["reportToken"],
+                {"selection": "a := 1", "question": "第一问"},
+            ))
+            list(store.explain_selection(
+                "report-2",
+                second["reportToken"],
+                {"selection": "return a", "question": "第二问"},
+            ))
+            registry = json.loads(store.registry_path.read_text())
+
+        self.assertEqual(captured[0]["sessionId"], "")
+        self.assertEqual(captured[1]["sessionId"], "child-session")
+        self.assertEqual(captured[0]["reviewKey"], captured[1]["reviewKey"])
+        self.assertEqual(len(registry["explanationSessions"]), 1)
+        session = next(iter(registry["explanationSessions"].values()))
+        self.assertEqual(session["sessionId"], "child-session")
+        self.assertEqual(session["sourceSessionId"], "source-session")
+
+    def test_explanation_requests_for_same_plan_are_fifo(self):
+        entered_first = threading.Event()
+        entered_second = threading.Event()
+        release_first = threading.Event()
+        events: list[str] = []
+
+        def explain(_agent: dict, _report_path: Path, request: dict):
+            question = request["question"]
+            events.append(f"start:{question}")
+            if question == "first":
+                entered_first.set()
+                release_first.wait(timeout=2)
+            else:
+                entered_second.set()
+            yield question
+            events.append(f"end:{question}")
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            report = self.make_report(root)
+            store = easy_cr_helper.HelperStore(
+                root / "config",
+                explainer=explain,
+            )
+            registration = store.register_report({
+                "reportId": "report-1",
+                "path": str(report),
+                "repositoryRoots": [str(root / "repo")],
+                "agent": {
+                    "client": "codex",
+                    "sessionId": "source-session",
+                    "cwd": str(root / "repo"),
+                },
+            })
+
+            def ask(question: str) -> None:
+                list(store.explain_selection(
+                    "report-1",
+                    registration["reportToken"],
+                    {"selection": "return nil", "question": question},
+                ))
+
+            first = threading.Thread(target=ask, args=("first",))
+            second = threading.Thread(target=ask, args=("second",))
+            first.start()
+            self.assertTrue(entered_first.wait(timeout=1))
+            second.start()
+            self.assertFalse(entered_second.wait(timeout=0.1))
+            release_first.set()
+            first.join(timeout=2)
+            second.join(timeout=2)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(
+            events,
+            ["start:first", "end:first", "start:second", "end:second"],
+        )
+
+    def test_explanation_requests_for_different_plans_do_not_share_queue(self):
+        first_entered = threading.Event()
+        second_entered = threading.Event()
+        release = threading.Event()
+
+        def explain(_agent: dict, _report_path: Path, request: dict):
+            if request["question"] == "first":
+                first_entered.set()
+                release.wait(timeout=2)
+            else:
+                second_entered.set()
+            yield request["question"]
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            repo = root / "repo"
+            reports = []
+            for index in (1, 2):
+                plan = repo / ".codex-artifacts" / f"plan-{index}"
+                plan.mkdir(parents=True)
+                report = plan / "review.html"
+                report.write_text(
+                    f"<html>{review_comments.empty_comments_block(f'report-{index}')}</html>"
+                )
+                reports.append(report)
+            store = easy_cr_helper.HelperStore(
+                root / "config",
+                explainer=explain,
+            )
+            registrations = [
+                store.register_report({
+                    "reportId": f"report-{index}",
+                    "path": str(report),
+                    "repositoryRoots": [str(repo)],
+                    "agent": {
+                        "client": "codex",
+                        "sessionId": f"source-{index}",
+                        "cwd": str(repo),
+                    },
+                })
+                for index, report in enumerate(reports, 1)
+            ]
+
+            def ask(index: int, question: str) -> None:
+                list(store.explain_selection(
+                    f"report-{index}",
+                    registrations[index - 1]["reportToken"],
+                    {"selection": "return nil", "question": question},
+                ))
+
+            first = threading.Thread(target=ask, args=(1, "first"))
+            second = threading.Thread(target=ask, args=(2, "second"))
+            first.start()
+            self.assertTrue(first_entered.wait(timeout=1))
+            second.start()
+            self.assertTrue(second_entered.wait(timeout=1))
+            release.set()
+            first.join(timeout=2)
+            second.join(timeout=2)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+
+    def test_registry_without_explanation_sessions_migrates_on_load(self):
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp)
+            config.mkdir(exist_ok=True)
+            registry_path = config / "helper-reports.json"
+            registry_path.write_text(json.dumps({
+                "version": 1,
+                "reports": {},
+            }))
+            store = easy_cr_helper.HelperStore(config)
+
+            loaded = store._load()
+
+        self.assertEqual(loaded["explanationSessions"], {})
+
     def test_send_comment_batch_marks_only_pending_comments_processing(self):
         launched: list[tuple[dict, Path]] = []
         opened: list[str] = []
@@ -2164,15 +2461,65 @@ class HelperServiceTest(unittest.TestCase):
         self.assertIn("本次问题：这个错误为什么直接返回？", prompt)
         self.assertIn("此前问答", prompt)
 
+    def test_claude_explanation_command_forks_once_then_resumes_child(self):
+        report = Path("/repo/.codex-artifacts/plan/review.html")
+        agent = {
+            "client": "claude",
+            "cwd": "/repo",
+            "sourceSessionId": "source-session",
+        }
+        with mock.patch.object(
+            easy_cr_helper.uuid,
+            "uuid4",
+            return_value="11111111-1111-4111-8111-111111111111",
+        ):
+            first = easy_cr_helper.explanation_command(
+                agent,
+                report,
+                "first",
+                claude_command=Path("/usr/local/bin/claude"),
+            )
+        second = easy_cr_helper.explanation_command(
+            agent,
+            report,
+            "second",
+            claude_command=Path("/usr/local/bin/claude"),
+        )
+
+        self.assertEqual(
+            first[:7],
+            [
+                "/usr/local/bin/claude",
+                "--resume",
+                "source-session",
+                "--fork-session",
+                "--session-id",
+                "11111111-1111-4111-8111-111111111111",
+                "--print",
+            ],
+        )
+        self.assertEqual(
+            second[:4],
+            [
+                "/usr/local/bin/claude",
+                "--resume",
+                "11111111-1111-4111-8111-111111111111",
+                "--print",
+            ],
+        )
+
     def test_default_explainer_streams_only_codex_answer(self):
         class FakeProcess:
-            stdout = iter([
-                "Reading additional input from stdin...\n",
-                '{"type":"thread.started","thread_id":"thread-1"}\n',
-                '{"type":"item.completed","item":{"type":"error","message":"warning"}}\n',
-                '{"type":"item.completed","item":{"type":"agent_message","text":"这是回答。"}}\n',
-                '{"type":"turn.completed"}\n',
-            ])
+            stdout = io.StringIO("".join([
+                '{"id":1,"result":{"userAgent":"test"}}\n',
+                '{"method":"thread/started","params":{"thread":{"id":"ignored"}}}\n',
+                '{"id":2,"result":{"thread":{"id":"thread-1"}}}\n',
+                '{"id":3,"result":{"turn":{"id":"turn-1"}}}\n',
+                '{"method":"item/agentMessage/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","delta":"这是"}}\n',
+                '{"method":"item/agentMessage/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","delta":"回答。"}}\n',
+                '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}}\n',
+            ]))
+            stdin = mock.Mock()
 
             @staticmethod
             def wait(timeout: int) -> int:
@@ -2201,13 +2548,66 @@ class HelperServiceTest(unittest.TestCase):
                 {
                     "client": "codex",
                     "cwd": "/repo",
+                    "sessionId": "source-thread",
                     "reportSubject": "帐期优化",
                 },
                 Path("/repo/.codex-artifacts/review.html"),
                 request,
             ))
 
-        self.assertEqual(chunks, ["这是回答。"])
+        self.assertEqual(chunks, ["这是", "回答。"])
+        written = "".join(
+            call.args[0] for call in FakeProcess.stdin.write.call_args_list
+        )
+        self.assertIn('"method": "thread/fork"', written)
+        self.assertIn('"threadId": "source-thread"', written)
+        self.assertIn('"ephemeral": false', written)
+        self.assertIn('"sandbox": "read-only"', written)
+        self.assertIn('"method": "turn/start"', written)
+
+    def test_codex_app_server_resumes_existing_explanation_session(self):
+        class FakeProcess:
+            stdout = io.StringIO("".join([
+                '{"id":1,"result":{"userAgent":"test"}}\n',
+                '{"id":2,"result":{"thread":{"id":"child-thread"}}}\n',
+                '{"id":3,"result":{"turn":{"id":"turn-2"}}}\n',
+                '{"method":"item/agentMessage/delta","params":{"threadId":"child-thread","turnId":"turn-2","itemId":"item-2","delta":"继续回答"}}\n',
+                '{"method":"turn/completed","params":{"threadId":"child-thread","turn":{"id":"turn-2","status":"completed"}}}\n',
+            ]))
+            stdin = mock.Mock()
+
+            @staticmethod
+            def poll() -> int:
+                return 0
+
+            @staticmethod
+            def kill() -> None:
+                raise AssertionError("successful process must not be killed")
+
+        agent = {
+            "client": "codex",
+            "cwd": "/repo",
+            "sourceSessionId": "source-thread",
+            "explanationSessionId": "child-thread",
+        }
+        with mock.patch.object(
+            easy_cr_helper.subprocess,
+            "Popen",
+            return_value=FakeProcess(),
+        ):
+            chunks = list(easy_cr_helper._codex_app_server_explainer(
+                agent,
+                Path("/repo/.codex-artifacts/plan/review.html"),
+                "follow up",
+            ))
+
+        self.assertEqual(chunks, ["继续回答"])
+        written = "".join(
+            call.args[0] for call in FakeProcess.stdin.write.call_args_list
+        )
+        self.assertIn('"method": "thread/resume"', written)
+        self.assertIn('"threadId": "child-thread"', written)
+        self.assertNotIn('"method": "thread/fork"', written)
 
     def test_codex_native_ipc_starts_turn_in_bound_desktop_thread(self):
         session_id = "019f88f5-e5d7-7ff1-bac3-7c46ab1fd365"
