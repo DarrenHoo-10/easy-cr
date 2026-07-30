@@ -311,6 +311,20 @@ def mark_iteration_changes(
                 line.iteration_change = index not in unchanged_indexes
 
 
+def has_sent_review_feedback(previous_html: str | None) -> bool:
+    if not previous_html:
+        return False
+    try:
+        previous_comments = extract_comments(previous_html)
+    except ValueError:
+        return False
+    return any(
+        comment.get("status") in {"processing", "resolved"}
+        for comment in previous_comments.get("comments", [])
+        if isinstance(comment, dict)
+    )
+
+
 def highlight_go_line(text: str, block_comment: bool) -> tuple[str, bool]:
     prefix = text[:1] if text[:1] in {"+", " ", "-"} else ""
     source = text[1:] if prefix else text
@@ -1091,7 +1105,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     schema_version, specs = resolve_repository_specs(raw_manifest, args)
     repositories = load_repositories(specs, args.context)
-    mark_iteration_changes(repositories, previous_state)
+    mark_iteration_changes(
+        repositories,
+        previous_state if has_sent_review_feedback(previous_html) else None,
+    )
     manifest = normalize_manifest(raw_manifest, schema_version, repositories)
     report_id = report_identifier(manifest, repositories)
     semantic, warning = resolve_semantic(

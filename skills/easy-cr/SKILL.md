@@ -99,7 +99,7 @@ The base HTML always supports:
 - Dark/light themes.
 - Document, chapter, selected-text and line comments.
 - Left-selection highlights exact repeated text on the current page; right-click exposes comment and AI explanation actions, including selections that cross the line-number gutter.
-- Selected-code AI explanations stream into an inline box below the code; the left caret toggles collapse state and there is no close action.
+- Selected-code `不懂就问` opens an inline code Q&A box below the code. The reviewer asks the first question before any request is sent and can continue with follow-up questions; answers stream in place. The left caret toggles collapse state and there is no close action.
 - Comment edit, delete, reply, resolve, summary popover and copy.
 - Persistence into the current HTML through the single local Easy CR helper, with a local pending draft while the service is unavailable.
 - No reviewed-copy export and no browser file picker.
@@ -125,7 +125,7 @@ When no editor is configured, the page contains no editor token or endpoint and 
 
 - Enhanced editors are selected from the built-in registry: `goland`, `idea`, and `vscode`.
 - Do not start `gopls`, MCP, or per-report background processes. All reports reuse the one LaunchAgent-managed Easy CR helper.
-- Browser-time AI is limited to selected-code explanation through the local helper; it must not modify files or comment state. Business-step explanations are still generated before the HTML is written.
+- Browser-time AI is limited to selected-code Q&A through the local helper; it must not modify files or comment state. Business-step explanations are still generated before the HTML is written.
 - Do not infer online behavior from code alone.
 - Do not organize the main review by technical layer or directory.
 - Keep precise same-page semantic identifier highlighting on hold unless the user explicitly reopens that scope.

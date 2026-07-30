@@ -31,7 +31,7 @@ easy-cr comments <report> --resolve-batch <batch-id> --reply <result>
 - New, edited, replied-to, or reopened comments are `pending`.
 - A successful send changes only the requested pending comments to `processing` and writes their `aiBatchId`.
 - Agent completion replies to each matching processing comment with the handling result, then changes only those comments to `resolved`.
-- Selected-code explanation uses the same registered report token and streams text only; it renders below the selected code with a left caret collapse toggle, and does not write comments, change statuses, or modify files.
+- Selected-code `不懂就问` uses the same registered report token. The first request contains the selected code and the reviewer's question; later requests may include the bounded in-page question history. Answers stream below the selected code with a left caret collapse toggle, and do not write comments, change statuses, or modify files.
 - Report regeneration on the same path preserves comment ids, replies, timestamps, status, and batch metadata while updating `reportId`.
 - Exact code anchors are preferred. A failed exact match may move only within the same repository and file and must set `target.approximate=true`.
 - Every changed production line except tests, dependency files, and conservatively recognized import-only changes must be visible in a business chapter.
@@ -42,7 +42,7 @@ easy-cr comments <report> --resolve-batch <batch-id> --reply <result>
 |---|---|
 | Expected revision is stale | HTTP 409; no comments are overwritten |
 | Any sent comment is missing or not pending | Request rejected; Agent is not started |
-| Explain request has no selected code | HTTP 400; no comments are changed |
+| Q&A request has no selected code or question | HTTP 400; no comments are changed |
 | Agent launch fails | Comment HTML rolls back to pending |
 | Batch has no processing comments | `--resolve-batch` fails without changing the report |
 | Production file is not in a chapter | Report generation fails with repo and path |

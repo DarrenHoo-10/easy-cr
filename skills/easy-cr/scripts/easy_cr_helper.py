@@ -364,6 +364,8 @@ def explanation_prompt(
     subject: str,
     selection: str,
     target: dict[str, Any],
+    question: str,
+    history: list[dict[str, str]] | None = None,
 ) -> str:
     location = ":".join(
         str(value)
@@ -374,16 +376,25 @@ def explanation_prompt(
         ]
         if value
     )
+    conversation = ""
+    if history:
+        turns = []
+        for item in history[-8:]:
+            role = "用户" if item["role"] == "user" else "AI"
+            turns.append(f"{role}：{item['content']}")
+        conversation = "\n\n此前问答：\n" + "\n".join(turns)
     return (
-        "请用中文解释下面这段 CR 报告中选中的代码。"
-        "只解释它在当前业务链路里的作用、关键输入输出和需要注意的边界，"
-        "不要修改任何文件，也不要执行命令。\n\n"
+        "请用中文回答用户针对 CR 报告中所选代码提出的问题。"
+        "结合代码在当前业务链路里的作用、关键输入输出和边界直接作答；"
+        "不确定时明确说明，不要修改任何文件，也不要执行命令。\n\n"
         f"报告：{subject}\n"
         f"位置：{location or '未知'}\n\n"
         "代码：\n"
         "```text\n"
         f"{selection.strip()}\n"
         "```"
+        f"{conversation}\n\n"
+        f"本次问题：{question.strip()}"
     )
 
 
@@ -411,8 +422,7 @@ def explanation_command(
             str(cwd),
             "--sandbox",
             "read-only",
-            "--ask-for-approval",
-            "never",
+            "--json",
             prompt,
         ]
     if client == "claude":
@@ -437,8 +447,11 @@ def _default_explainer(
 ) -> Iterable[str]:
     selection = str(request.get("selection") or "").strip()
     target = request.get("target") if isinstance(request.get("target"), dict) else {}
+    question = str(request.get("question") or "").strip()
+    raw_history = request.get("history")
+    history = raw_history if isinstance(raw_history, list) else []
     subject = str(agent.get("reportSubject") or report_path.stem)
-    prompt = explanation_prompt(subject, selection, target)
+    prompt = explanation_prompt(subject, selection, target, question, history)
     arguments = explanation_command(agent, report_path, prompt)
     if not Path(arguments[0]).is_file():
         raise RuntimeError(f"未找到 Agent CLI：{arguments[0]}")
@@ -453,13 +466,33 @@ def _default_explainer(
         bufsize=1,
     )
     assert process.stdout is not None
+    diagnostics: list[str] = []
     try:
         for chunk in process.stdout:
-            if chunk:
+            if not chunk:
+                continue
+            if agent.get("client") != "codex":
                 yield chunk
+                continue
+            try:
+                event = json.loads(chunk)
+            except json.JSONDecodeError:
+                diagnostics.append(chunk.strip())
+                diagnostics = diagnostics[-4:]
+                continue
+            item = event.get("item") if isinstance(event, dict) else None
+            if (
+                event.get("type") == "item.completed"
+                and isinstance(item, dict)
+                and item.get("type") == "agent_message"
+                and isinstance(item.get("text"), str)
+            ):
+                yield item["text"]
         status = process.wait(timeout=5)
         if status:
-            raise RuntimeError(f"AI 解释生成失败（exit {status}）")
+            detail = "；".join(value for value in diagnostics if value)
+            suffix = f"：{detail}" if detail else ""
+            raise RuntimeError(f"AI 回答生成失败（exit {status}）{suffix}")
     finally:
         if process.poll() is None:
             process.kill()
@@ -804,6 +837,37 @@ class HelperStore:
             raise ValueError("选中代码不能为空")
         if len(selection.encode("utf-8")) > 12000:
             raise ValueError("选中代码过长，请缩小范围后再解释")
+        question = str(request.get("question") or "").strip()
+        if not question:
+            raise ValueError("请输入要问 AI 的问题")
+        if len(question.encode("utf-8")) > 4000:
+            raise ValueError("问题过长，请精简后重试")
+        raw_history = request.get("history")
+        if raw_history is None:
+            history: list[dict[str, str]] = []
+        elif not isinstance(raw_history, list):
+            raise ValueError("问答历史格式无效")
+        else:
+            history = []
+            for item in raw_history[-8:]:
+                if not isinstance(item, dict):
+                    raise ValueError("问答历史格式无效")
+                role = item.get("role")
+                content = str(item.get("content") or "").strip()
+                if role not in {"user", "assistant"} or not content:
+                    raise ValueError("问答历史格式无效")
+                history.append({"role": role, "content": content})
+            if sum(
+                len(item["content"].encode("utf-8"))
+                for item in history
+            ) > 20000:
+                raise ValueError("问答历史过长，请重新选择代码后提问")
+        request = {
+            **request,
+            "selection": selection,
+            "question": question,
+            "history": history,
+        }
         with self.lock:
             registry = self._load()
             entry = self._entry(registry, report_id, token)

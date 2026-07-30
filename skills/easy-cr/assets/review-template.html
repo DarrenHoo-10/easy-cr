@@ -9,6 +9,7 @@
   --bg:#f5f0e8; --surface:#fffcf7; --surface-soft:#f1ece4; --surface-strong:#e7e0d5;
   --text:#22262c; --muted:#716e68; --border:#ded6c9; --primary:#1f3a5f;
   --primary-soft:#e8edf2; --success:#2e6e55; --success-soft:#e3f2e9;
+  --iteration-change:#b7d8c2; --iteration-change-text:#174d35; --iteration-change-rail:#1f6b45;
   --danger:#a94b45; --danger-soft:#f8e7e5; --comment:#8a6a10; --comment-soft:#fff4c2;
   --gutter:#f3eee7; --shadow:0 14px 34px rgba(43,47,52,.12);
   color-scheme:light;
@@ -17,6 +18,7 @@
   --bg:#171a1f; --surface:#20242a; --surface-soft:#292d34; --surface-strong:#333842;
   --text:#f3efe7; --muted:#b3ada3; --border:#45413b; --primary:#9eb2c8;
   --primary-soft:#273747; --success:#9cc9ad; --success-soft:#1f382c;
+  --iteration-change:#275b45; --iteration-change-text:#edf8f1; --iteration-change-rail:#72b18e;
   --danger:#e3a09a; --danger-soft:#442b2b; --comment:#f2d77a; --comment-soft:#4a4021;
   --gutter:#1c2025; --shadow:0 18px 42px rgba(0,0,0,.34);
   color-scheme:dark;
@@ -145,11 +147,11 @@ button { color:inherit }
 .line-no:hover { color:var(--text); background:var(--primary-soft) }
 .line.add { background:var(--success-soft); color:var(--success) }
 .line.del { background:var(--danger-soft); color:var(--danger) }
-.line.add.iteration-change { background:#2e6e55; color:#fff }
+.line.add.iteration-change { background:var(--iteration-change); color:var(--iteration-change-text); box-shadow:inset 4px 0 var(--iteration-change-rail) }
 .line.peer-step-change { color:var(--muted) !important; background:var(--surface-soft) !important }
 .line.add .line-no { color:var(--success); background:var(--success-soft) }
 .line.del .line-no { color:var(--danger); background:var(--danger-soft) }
-.line.add.iteration-change .line-no { color:#fff; background:#2e6e55 }
+.line.add.iteration-change .line-no { color:var(--iteration-change-text); background:var(--iteration-change) }
 .line.peer-step-change .line-no { color:var(--muted) !important; background:var(--surface-soft) !important }
 .line.hunk { margin:5px 0; background:var(--primary-soft); color:var(--primary) }
 .line.meta { color:var(--muted) }
@@ -211,8 +213,20 @@ body.semantic-enabled .code-identifier:hover { color:var(--primary); text-decora
 .explain-box { min-width:600px; margin:7px 12px 9px 88px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text); white-space:normal; font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; overflow:hidden }
 .explain-head { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid var(--border); background:var(--surface-soft); font-size:12px; font-weight:800 }
 .explain-toggle { width:22px; height:22px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--primary); cursor:pointer; line-height:1 }
-.explain-body { margin:0; max-height:280px; overflow:auto; padding:10px; color:var(--muted); white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace }
-.explain-box.collapsed .explain-body { display:none }
+.explain-content { display:flex; flex-direction:column; min-height:120px }
+.explain-thread { max-height:360px; overflow:auto; padding:10px }
+.explain-empty { padding:18px 10px; color:var(--muted); text-align:center; font-size:12px }
+.explain-message { width:fit-content; max-width:88%; margin-bottom:9px; padding:8px 10px; border-radius:8px; white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace }
+.explain-message.user { margin-left:auto; color:var(--text); background:var(--primary-soft) }
+.explain-message.assistant { color:var(--muted); background:var(--surface-soft) }
+.explain-message.error { color:var(--danger); background:var(--danger-soft) }
+.explain-composer { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; padding:10px; border-top:1px solid var(--border); background:var(--surface) }
+.explain-composer textarea { min-height:54px; max-height:150px; resize:vertical; padding:8px 9px; border:1px solid var(--border); border-radius:7px; outline:none; color:var(--text); background:var(--bg) }
+.explain-composer textarea:focus { border-color:var(--primary) }
+.explain-send { align-self:end; min-width:62px; padding:7px 10px; border:1px solid var(--primary); border-radius:7px; color:#fff; background:var(--primary); cursor:pointer }
+.explain-send:disabled { cursor:not-allowed; opacity:.55 }
+.explain-hint { grid-column:1/-1; color:var(--muted); font-size:10px }
+.explain-box.collapsed .explain-content { display:none }
 ::highlight(review-comments) { background:var(--comment-soft); color:var(--text) }
 .comments-popover,.reference-popover { display:none; position:fixed; z-index:120; width:min(440px,calc(100vw - 24px)); max-height:min(620px,calc(100vh - 48px)); border:1px solid var(--border); border-radius:12px; background:var(--surface); box-shadow:var(--shadow); overflow:hidden }
 .comments-popover.visible,.reference-popover.visible { display:flex; flex-direction:column }
@@ -353,7 +367,7 @@ body.semantic-enabled .code-identifier:hover { color:var(--primary); text-decora
 </div>
 <div id="selection-menu" class="selection-menu">
   <button type="button" data-action="comment">评论</button>
-  <button type="button" data-action="explain">AI 解释</button>
+  <button type="button" data-action="explain">不懂就问</button>
 </div>
 <div id="comments-popover" class="comments-popover" role="dialog" aria-labelledby="comments-title">
   <div class="popover-head">
@@ -1236,8 +1250,7 @@ function createExplanationBox(draft) {
   const endLine = draft.lines[draft.end];
   const box = document.createElement('div');
   box.className = 'explain-box';
-  box.innerHTML = `<div class="explain-head"><button class="explain-toggle" type="button" aria-expanded="true" title="展开/收起">▾</button><span>AI 解释</span></div><pre class="explain-body"></pre>`;
-  const body = box.querySelector('.explain-body');
+  box.innerHTML = `<div class="explain-head"><button class="explain-toggle" type="button" aria-expanded="true" title="展开/收起">▾</button><span>不懂就问</span></div><div class="explain-content"><div class="explain-thread"><div class="explain-empty">针对所选代码输入问题，可继续追问。</div></div><div class="explain-composer"><textarea placeholder="针对这段代码问 AI…" aria-label="向 AI 提问"></textarea><button class="explain-send" type="button">发送</button><div class="explain-hint">Enter 发送，Command+Enter 或 Shift+Enter 换行</div></div></div>`;
   const toggle = box.querySelector('.explain-toggle');
   toggle.addEventListener('click', () => {
     box.classList.toggle('collapsed');
@@ -1247,55 +1260,101 @@ function createExplanationBox(draft) {
   });
   endLine.insertAdjacentElement('afterend', box);
   activeExplainBox = box;
-  return body;
+  return box;
 }
 
-async function explainTextSelection(draft) {
-  const body = createExplanationBox(draft);
-  if (helper.mode !== 'local') {
-    body.textContent = helper.error || 'Easy CR 评论服务未连接';
-    return;
-  }
-  if (!helper.agentBound) {
-    body.textContent = '该报告未绑定生成它的 Agent，无法生成解释';
-    return;
-  }
-  body.textContent = '正在生成解释…\n';
-  try {
-    const response = await fetch(`${helper.endpoint}/api/explain`, {
-      method:'POST',
-      headers:{
-        'Content-Type':'application/json',
-        'X-Easy-CR-Token':helper.token
-      },
-      body:JSON.stringify({
-        reportId:report.reportId,
-        selection:draft.quote,
-        target:selectedCodeTarget(draft)
-      })
-    });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error.error || `请求失败（HTTP ${response.status}）`);
-    }
-    body.textContent = '';
-    if (!response.body?.getReader) {
-      body.textContent = await response.text();
+function appendExplanationMessage(thread, role, content = '') {
+  thread.querySelector('.explain-empty')?.remove();
+  const message = document.createElement('div');
+  message.className = `explain-message ${role}`;
+  message.textContent = content;
+  thread.append(message);
+  thread.scrollTop = thread.scrollHeight;
+  return message;
+}
+
+function explainTextSelection(draft) {
+  const box = createExplanationBox(draft);
+  const thread = box.querySelector('.explain-thread');
+  const textarea = box.querySelector('textarea');
+  const send = box.querySelector('.explain-send');
+  const history = [];
+  let busy = false;
+
+  const ask = async () => {
+    const question = textarea.value.trim();
+    if (!question || busy) return;
+    if (helper.mode !== 'local') {
+      appendExplanationMessage(thread, 'error', helper.error || 'Easy CR 评论服务未连接');
       return;
     }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    while (true) {
-      const {value, done} = await reader.read();
-      if (done) break;
-      body.textContent += decoder.decode(value, {stream:true});
-      body.scrollTop = body.scrollHeight;
+    if (!helper.agentBound) {
+      appendExplanationMessage(thread, 'error', '该报告未绑定生成它的 Agent，无法回答');
+      return;
     }
-    body.textContent += decoder.decode();
-    if (!body.textContent.trim()) body.textContent = '未生成解释';
-  } catch (error) {
-    body.textContent = error.message;
-  }
+    busy = true;
+    send.disabled = true;
+    textarea.disabled = true;
+    const priorHistory = history.slice(-8);
+    appendExplanationMessage(thread, 'user', question);
+    const answer = appendExplanationMessage(thread, 'assistant', '正在思考…');
+    textarea.value = '';
+    try {
+      const response = await fetch(`${helper.endpoint}/api/explain`, {
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json',
+          'X-Easy-CR-Token':helper.token
+        },
+        body:JSON.stringify({
+          reportId:report.reportId,
+          selection:draft.quote,
+          question,
+          history:priorHistory,
+          target:selectedCodeTarget(draft)
+        })
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || `请求失败（HTTP ${response.status}）`);
+      }
+      answer.textContent = '';
+      if (!response.body?.getReader) {
+        answer.textContent = await response.text();
+      } else {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        while (true) {
+          const {value, done} = await reader.read();
+          if (done) break;
+          answer.textContent += decoder.decode(value, {stream:true});
+          thread.scrollTop = thread.scrollHeight;
+        }
+        answer.textContent += decoder.decode();
+      }
+      if (!answer.textContent.trim()) answer.textContent = '未生成回答';
+      history.push(
+        {role:'user', content:question},
+        {role:'assistant', content:answer.textContent}
+      );
+    } catch (error) {
+      answer.classList.add('error');
+      answer.textContent = error.message;
+    } finally {
+      busy = false;
+      send.disabled = false;
+      textarea.disabled = false;
+      textarea.focus();
+    }
+  };
+
+  send.addEventListener('click', ask);
+  textarea.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' || event.metaKey || event.shiftKey) return;
+    event.preventDefault();
+    ask();
+  });
+  textarea.focus();
 }
 
 function openLineComment(line, card, extend) {

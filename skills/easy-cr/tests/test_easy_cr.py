@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 import re
@@ -461,6 +462,9 @@ class TemplateContractTest(unittest.TestCase):
         self.assertIn("highlightPageTextMatches", template)
         self.assertIn('data-action="explain"', template)
         self.assertIn("explainTextSelection", template)
+        self.assertIn("不懂就问", template)
+        self.assertIn("针对这段代码问 AI", template)
+        self.assertIn("history:priorHistory", template)
         self.assertIn("class=\"explain-toggle\"", template)
         self.assertIn("aria-expanded", template)
         self.assertNotIn("data-action=\"close\"", template)
@@ -1515,6 +1519,52 @@ class BuildReviewTest(unittest.TestCase):
         self.assertTrue(migrated["comments"][0]["target"]["approximate"])
         self.assertNotEqual(migrated["reportId"], first_report_id)
 
+    def test_iteration_change_requires_sent_review_feedback(self):
+        previous_state = {
+            "files": {
+                "repo:service.go": {
+                    "added": [
+                        hashlib.sha256(
+                            b"+func Value() int { return 1 }"
+                        ).hexdigest(),
+                    ],
+                },
+            },
+        }
+        repository = build_review.RepositoryReview(
+            id="repo",
+            label="repo",
+            root=Path("/repo"),
+            base="base",
+            head="head",
+            context=10,
+            revision={
+                "headCommit": "a" * 40,
+                "reviewType": "revision",
+                "fingerprint": "b" * 40,
+            },
+            files=[
+                build_review.DiffFile(
+                    "service.go",
+                    lines=[
+                        build_review.DiffLine(
+                            "+func Value() int { return 2 }",
+                            "add",
+                            new_line=3,
+                        ),
+                    ],
+                ),
+            ],
+            subject="test",
+            author="test",
+            authored_at="test",
+        )
+        build_review.mark_iteration_changes([repository], None)
+        self.assertFalse(repository.files[0].lines[0].iteration_change)
+
+        build_review.mark_iteration_changes([repository], previous_state)
+        self.assertTrue(repository.files[0].lines[0].iteration_change)
+
 
 class ReviewCommentsTest(unittest.TestCase):
     def test_comment_parser_ignores_marker_literals_in_runtime_script(self):
@@ -1746,6 +1796,11 @@ class HelperServiceTest(unittest.TestCase):
                 registration["reportToken"],
                 {
                     "selection": "if err != nil { return err }",
+                    "question": "为什么直接返回？",
+                    "history": [
+                        {"role": "user", "content": "这个函数做什么？"},
+                        {"role": "assistant", "content": "它处理请求。"},
+                    ],
                     "target": {"repoId": "repo", "path": "service.go", "lineLabel": "+42"},
                 },
             ))
@@ -1754,7 +1809,13 @@ class HelperServiceTest(unittest.TestCase):
                 list(store.explain_selection(
                     "report-1",
                     registration["reportToken"],
-                    {"selection": "   "},
+                    {"selection": "   ", "question": "为什么？"},
+                ))
+            with self.assertRaisesRegex(ValueError, "请输入"):
+                list(store.explain_selection(
+                    "report-1",
+                    registration["reportToken"],
+                    {"selection": "return nil", "question": "   "},
                 ))
 
         self.assertEqual("".join(chunks), "解释第一段，解释第二段")
@@ -1762,6 +1823,8 @@ class HelperServiceTest(unittest.TestCase):
         self.assertEqual(captured[0][0]["reportSubject"], "帐期优化")
         self.assertEqual(captured[0][1], report.resolve())
         self.assertEqual(captured[0][2]["target"]["path"], "service.go")
+        self.assertEqual(captured[0][2]["question"], "为什么直接返回？")
+        self.assertEqual(captured[0][2]["history"][0]["role"], "user")
 
     def test_send_comment_batch_marks_only_pending_comments_processing(self):
         launched: list[tuple[dict, Path]] = []
@@ -1996,6 +2059,11 @@ class HelperServiceTest(unittest.TestCase):
             "帐期优化",
             "if err != nil { return err }",
             {"repoId": "repo", "path": "service.go", "lineLabel": "+42"},
+            "这个错误为什么直接返回？",
+            [
+                {"role": "user", "content": "这个函数做什么？"},
+                {"role": "assistant", "content": "它负责确认方案。"},
+            ],
         )
         codex = easy_cr_helper.explanation_command(
             {"client": "codex", "cwd": "/repo"},
@@ -2007,10 +2075,57 @@ class HelperServiceTest(unittest.TestCase):
         self.assertEqual(codex[:3], ["/Applications/Codex", "exec", "--ephemeral"])
         self.assertIn("--sandbox", codex)
         self.assertIn("read-only", codex)
-        self.assertIn("--ask-for-approval", codex)
-        self.assertIn("never", codex)
+        self.assertIn("--json", codex)
+        self.assertNotIn("--ask-for-approval", codex)
         self.assertEqual(codex[-1], prompt)
         self.assertIn("不要修改任何文件", prompt)
+        self.assertIn("本次问题：这个错误为什么直接返回？", prompt)
+        self.assertIn("此前问答", prompt)
+
+    def test_default_explainer_streams_only_codex_answer(self):
+        class FakeProcess:
+            stdout = iter([
+                "Reading additional input from stdin...\n",
+                '{"type":"thread.started","thread_id":"thread-1"}\n',
+                '{"type":"item.completed","item":{"type":"error","message":"warning"}}\n',
+                '{"type":"item.completed","item":{"type":"agent_message","text":"这是回答。"}}\n',
+                '{"type":"turn.completed"}\n',
+            ])
+
+            @staticmethod
+            def wait(timeout: int) -> int:
+                return 0
+
+            @staticmethod
+            def poll() -> int:
+                return 0
+
+            @staticmethod
+            def kill() -> None:
+                raise AssertionError("successful process must not be killed")
+
+        request = {
+            "selection": "return nil",
+            "question": "为什么返回 nil？",
+            "history": [],
+            "target": {"path": "service.go", "lineLabel": "+42"},
+        }
+        with mock.patch.object(
+            easy_cr_helper.subprocess,
+            "Popen",
+            return_value=FakeProcess(),
+        ):
+            chunks = list(easy_cr_helper._default_explainer(
+                {
+                    "client": "codex",
+                    "cwd": "/repo",
+                    "reportSubject": "帐期优化",
+                },
+                Path("/repo/.codex-artifacts/review.html"),
+                request,
+            ))
+
+        self.assertEqual(chunks, ["这是回答。"])
 
     def test_codex_native_ipc_starts_turn_in_bound_desktop_thread(self):
         session_id = "019f88f5-e5d7-7ff1-bac3-7c46ab1fd365"
