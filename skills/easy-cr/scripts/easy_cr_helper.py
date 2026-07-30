@@ -24,7 +24,7 @@ import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -360,6 +360,111 @@ def agent_command(
     raise RuntimeError("报告未绑定可恢复的 Agent")
 
 
+def explanation_prompt(
+    subject: str,
+    selection: str,
+    target: dict[str, Any],
+) -> str:
+    location = ":".join(
+        str(value)
+        for value in [
+            target.get("repoId") or "",
+            target.get("path") or "",
+            target.get("lineLabel") or "",
+        ]
+        if value
+    )
+    return (
+        "请用中文解释下面这段 CR 报告中选中的代码。"
+        "只解释它在当前业务链路里的作用、关键输入输出和需要注意的边界，"
+        "不要修改任何文件，也不要执行命令。\n\n"
+        f"报告：{subject}\n"
+        f"位置：{location or '未知'}\n\n"
+        "代码：\n"
+        "```text\n"
+        f"{selection.strip()}\n"
+        "```"
+    )
+
+
+def explanation_command(
+    agent: dict[str, Any],
+    report_path: Path,
+    prompt: str,
+    *,
+    codex_command: Path | None = None,
+    claude_command: Path | None = None,
+) -> list[str]:
+    client = agent.get("client")
+    cwd = Path(str(agent.get("cwd") or report_path.parent)).resolve()
+    if client == "codex":
+        detected = shutil.which("codex")
+        executable = codex_command or (
+            Path(detected) if detected else CODEX_APP_COMMAND
+        )
+        return [
+            str(executable),
+            "exec",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "-C",
+            str(cwd),
+            "--sandbox",
+            "read-only",
+            "--ask-for-approval",
+            "never",
+            prompt,
+        ]
+    if client == "claude":
+        detected = shutil.which("claude")
+        executable = claude_command or (Path(detected) if detected else None)
+        if executable is None:
+            raise RuntimeError("未找到 Claude Code CLI")
+        return [
+            str(executable),
+            "--print",
+            "--permission-mode",
+            "dontAsk",
+            prompt,
+        ]
+    raise RuntimeError("报告未绑定可解释代码的 Agent")
+
+
+def _default_explainer(
+    agent: dict[str, Any],
+    report_path: Path,
+    request: dict[str, Any],
+) -> Iterable[str]:
+    selection = str(request.get("selection") or "").strip()
+    target = request.get("target") if isinstance(request.get("target"), dict) else {}
+    subject = str(agent.get("reportSubject") or report_path.stem)
+    prompt = explanation_prompt(subject, selection, target)
+    arguments = explanation_command(agent, report_path, prompt)
+    if not Path(arguments[0]).is_file():
+        raise RuntimeError(f"未找到 Agent CLI：{arguments[0]}")
+    cwd = Path(str(agent.get("cwd") or report_path.parent)).resolve()
+    process = subprocess.Popen(
+        arguments,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    try:
+        for chunk in process.stdout:
+            if chunk:
+                yield chunk
+        status = process.wait(timeout=5)
+        if status:
+            raise RuntimeError(f"AI 解释生成失败（exit {status}）")
+    finally:
+        if process.poll() is None:
+            process.kill()
+
+
 def _write_ipc_frame(connection: socket.socket, payload: dict[str, Any]) -> None:
     encoded = json.dumps(payload, ensure_ascii=False).encode()
     connection.sendall(struct.pack("<I", len(encoded)) + encoded)
@@ -535,11 +640,15 @@ class HelperStore:
         *,
         launcher: Callable[[dict[str, Any], Path], None] = _default_launcher,
         client_opener: Callable[[dict[str, Any]], bool] = _default_client_opener,
+        explainer: Callable[
+            [dict[str, Any], Path, dict[str, Any]], Iterable[str]
+        ] = _default_explainer,
     ) -> None:
         self.config_dir = config_dir.expanduser()
         self.registry_path = self.config_dir / "helper-reports.json"
         self.launcher = launcher
         self.client_opener = client_opener
+        self.explainer = explainer
         self.lock = threading.RLock()
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.config_dir.chmod(0o700)
@@ -684,6 +793,30 @@ class HelperStore:
                 raise ValueError("报告内嵌 reportId 不匹配")
             return payload
 
+    def explain_selection(
+        self,
+        report_id: str,
+        token: str,
+        request: dict[str, Any],
+    ) -> Iterable[str]:
+        selection = str(request.get("selection") or "").strip()
+        if not selection:
+            raise ValueError("选中代码不能为空")
+        if len(selection.encode("utf-8")) > 12000:
+            raise ValueError("选中代码过长，请缩小范围后再解释")
+        with self.lock:
+            registry = self._load()
+            entry = self._entry(registry, report_id, token)
+            path = Path(entry["path"]).resolve()
+            agent = entry.get("agent")
+            if not isinstance(agent, dict):
+                raise ValueError("该报告未绑定生成它的 Agent")
+            explain_agent = {
+                **agent,
+                "reportSubject": str(entry.get("subject") or path.stem),
+            }
+        return self.explainer(explain_agent, path, request)
+
     def complete_review(
         self,
         report_id: str,
@@ -810,6 +943,25 @@ class HelperRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_text_stream(self, chunks: Iterable[str]) -> None:
+        self.send_response(200)
+        origin = self._origin()
+        if origin in {"null", f"http://127.0.0.1:{HELPER_PORT}", f"http://localhost:{HELPER_PORT}"}:
+            self.send_header("Access-Control-Allow-Origin", origin)
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Easy-CR-Token")
+        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+        try:
+            for chunk in chunks:
+                if not chunk:
+                    continue
+                self.wfile.write(str(chunk).encode())
+                self.wfile.flush()
+        except Exception as error:
+            self.wfile.write(f"\n\n[错误] {error}".encode())
+            self.wfile.flush()
+
     def do_OPTIONS(self) -> None:
         if not self._allowed_origin():
             self._send(403, {"error": "Origin 不允许"})
@@ -858,6 +1010,14 @@ class HelperRequestHandler(BaseHTTPRequestHandler):
                     payload.get("commentIds"),
                     str(payload.get("aiBatchId") or ""),
                 )
+            elif self.path == "/api/explain":
+                chunks = store.explain_selection(
+                    str(payload.get("reportId") or ""),
+                    token,
+                    payload,
+                )
+                self._send_text_stream(chunks)
+                return
             else:
                 self._send(404, {"error": "接口不存在"})
                 return

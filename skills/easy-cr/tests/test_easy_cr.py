@@ -82,6 +82,7 @@ class PluginManifestTest(unittest.TestCase):
         self.assertIn("do not change code yet", skill)
         self.assertIn("Present every such item together", skill)
         self.assertIn("--resolve-batch <batch-id>", skill)
+        self.assertIn("--reply \"处理结果", skill)
         self.assertIn("未处理 → 处理中 → 已解决", skill)
         self.assertNotIn("Use “补充其他改动”", skill)
 
@@ -439,7 +440,9 @@ class TemplateContractTest(unittest.TestCase):
         self.assertIn("helperRequest('/api/comments/write'", template)
         self.assertIn("helperRequest('/api/comments/read'", template)
         self.assertIn("helperRequest('/api/reviews/complete'", template)
+        self.assertIn("/api/explain", template)
         self.assertIn('id="complete-review"', template)
+        self.assertIn('id="step-sidebar-title"', template)
         self.assertNotIn("showOpenFilePicker", template)
         self.assertNotIn("createWritable", template)
         self.assertNotIn("exportReviewedCopy", template)
@@ -448,8 +451,18 @@ class TemplateContractTest(unittest.TestCase):
         self.assertIn(review_comments.COMMENTS_END, template)
         self.assertNotIn("评论将自动写入当前 HTML", template)
         self.assertNotIn("评论已写入 HTML", template)
+        self.assertNotIn("评论尚未写入 HTML", template)
+        self.assertNotIn("正在把待写入草稿保存到 HTML", template)
         self.assertIn("inline-comment-composer", template)
         self.assertIn("inlineAfter", template)
+        self.assertIn("commentDraftPrefix", template)
+        self.assertIn("composerHasDraft", template)
+        self.assertIn("selection-text-match", template)
+        self.assertIn("highlightPageTextMatches", template)
+        self.assertIn('data-action="explain"', template)
+        self.assertIn("explainTextSelection", template)
+        self.assertIn("applyGuidedDisplayMode", template)
+        self.assertIn("peer-step-change", template)
         self.assertIn("values.forEach(comment => {", template)
         self.assertNotIn("values.slice(0, 4).forEach(comment => {", template)
         self.assertIn("main.className = 'mini-comment-main'", template)
@@ -463,6 +476,7 @@ class TemplateContractTest(unittest.TestCase):
         )
         self.assertNotIn("/api/ai", template)
         self.assertNotIn("fetchExplanation", template)
+        self.assertNotIn("showSelectionMenu(captured.rect)", template)
 
     def test_report_chrome_uses_single_navy_accent_and_home_button(self):
         template = TEMPLATE_PATH.read_text()
@@ -495,6 +509,8 @@ class TemplateContractTest(unittest.TestCase):
         self.assertIn("scheduleCommentsPopoverOpen(count", template)
         self.assertIn("item.addEventListener('click', () => focusComment(comment))", template)
         self.assertIn("focusCommentElement", template)
+        self.assertIn("clearTextMatches", template)
+        self.assertIn("NodeFilter.SHOW_TEXT", template)
 
     def test_gutter_selection_uses_boundary_clamping(self):
         template = TEMPLATE_PATH.read_text()
@@ -873,12 +889,16 @@ class CliTest(unittest.TestCase):
                 str(report),
                 "--resolve-batch",
                 "batch-1",
+                "--reply",
+                "处理结果：已补充失败分支。",
             ])
             updated = review_comments.extract_comments(report.read_text())
 
         self.assertEqual(result, 0)
         self.assertEqual(updated["revision"], 3)
         self.assertEqual(updated["comments"][0]["status"], "resolved")
+        self.assertEqual(updated["comments"][0]["replies"][0]["author"], "ai")
+        self.assertEqual(updated["comments"][0]["replies"][0]["body"], "处理结果：已补充失败分支。")
         self.assertEqual(updated["comments"][1]["status"], "processing")
 
     def test_init_installs_single_helper_service(self):
@@ -1564,12 +1584,22 @@ class ReviewCommentsTest(unittest.TestCase):
             ],
         }
 
-        updated = review_comments.mark_batch_resolved(payload, "batch-1")
+        updated = review_comments.mark_batch_resolved(
+            payload,
+            "batch-1",
+            "处理结果：已调整实现。",
+        )
 
         self.assertEqual(updated["revision"], 5)
         self.assertEqual(updated["comments"][0]["status"], "resolved")
+        self.assertEqual(updated["comments"][0]["replies"][0]["author"], "ai")
+        self.assertEqual(
+            updated["comments"][0]["replies"][0]["body"],
+            "处理结果：已调整实现。",
+        )
         self.assertEqual(updated["comments"][1]["status"], "processing")
         self.assertEqual(updated["comments"][2]["status"], "pending")
+        self.assertEqual(updated["comments"][1].get("replies"), [])
 
 
 class HelperServiceTest(unittest.TestCase):
@@ -1682,6 +1712,51 @@ class HelperServiceTest(unittest.TestCase):
                     "repositoryRoots": [str(root / "repo")],
                     "agent": None,
                 })
+
+    def test_explain_selection_uses_bound_agent_without_mutating_comments(self):
+        captured: list[tuple[dict, Path, dict]] = []
+
+        def explain(agent: dict, report_path: Path, request: dict):
+            captured.append((agent, report_path, request))
+            return iter(["解释第一段", "，解释第二段"])
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            report = self.make_report(root)
+            store = easy_cr_helper.HelperStore(root / "config", explainer=explain)
+            registration = store.register_report({
+                "reportId": "report-1",
+                "path": str(report),
+                "repositoryRoots": [str(root / "repo")],
+                "agent": {
+                    "client": "codex",
+                    "sessionId": "session-1",
+                    "cwd": str(root / "repo"),
+                },
+                "subject": "帐期优化",
+            })
+
+            chunks = list(store.explain_selection(
+                "report-1",
+                registration["reportToken"],
+                {
+                    "selection": "if err != nil { return err }",
+                    "target": {"repoId": "repo", "path": "service.go", "lineLabel": "+42"},
+                },
+            ))
+            embedded = review_comments.extract_comments(report.read_text())
+            with self.assertRaises(ValueError):
+                list(store.explain_selection(
+                    "report-1",
+                    registration["reportToken"],
+                    {"selection": "   "},
+                ))
+
+        self.assertEqual("".join(chunks), "解释第一段，解释第二段")
+        self.assertEqual(embedded["comments"], [])
+        self.assertEqual(captured[0][0]["reportSubject"], "帐期优化")
+        self.assertEqual(captured[0][1], report.resolve())
+        self.assertEqual(captured[0][2]["target"]["path"], "service.go")
 
     def test_send_comment_batch_marks_only_pending_comments_processing(self):
         launched: list[tuple[dict, Path]] = []
@@ -1909,6 +1984,28 @@ class HelperServiceTest(unittest.TestCase):
             ),
         )
         self.assertIn(str(report), claude[-1])
+
+    def test_explanation_command_is_read_only_and_ephemeral(self):
+        report = Path("/repo/.codex-artifacts/review.html")
+        prompt = easy_cr_helper.explanation_prompt(
+            "帐期优化",
+            "if err != nil { return err }",
+            {"repoId": "repo", "path": "service.go", "lineLabel": "+42"},
+        )
+        codex = easy_cr_helper.explanation_command(
+            {"client": "codex", "cwd": "/repo"},
+            report,
+            prompt,
+            codex_command=Path("/Applications/Codex"),
+        )
+
+        self.assertEqual(codex[:3], ["/Applications/Codex", "exec", "--ephemeral"])
+        self.assertIn("--sandbox", codex)
+        self.assertIn("read-only", codex)
+        self.assertIn("--ask-for-approval", codex)
+        self.assertIn("never", codex)
+        self.assertEqual(codex[-1], prompt)
+        self.assertIn("不要修改任何文件", prompt)
 
     def test_codex_native_ipc_starts_turn_in_bound_desktop_thread(self):
         session_id = "019f88f5-e5d7-7ff1-bac3-7c46ab1fd365"

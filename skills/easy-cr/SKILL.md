@@ -79,13 +79,13 @@ Before editing code, classify the whole batch:
 
 - If any comment is a question, discussion, confirmation request, non-code request, or a point the Agent disagrees with, do not change code yet. Present every such item together, wait for the user to confirm, then process the batch as one unit.
 - Otherwise implement all actionable comments, validate the result, and regenerate the same report path so historical comments remain attached.
-- After the batch is fully handled, including agreed no-code outcomes, mark only that batch resolved:
+- After the batch is fully handled, including agreed no-code outcomes, reply with the processing result and mark only that batch resolved:
 
 ```bash
-easy-cr comments /absolute/path/to/review.html --resolve-batch <batch-id>
+easy-cr comments /absolute/path/to/review.html --resolve-batch <batch-id> --reply "处理结果：..."
 ```
 
-Do not mark a batch resolved before implementation, validation, and report regeneration are complete.
+Do not mark a batch resolved before implementation, validation, and report regeneration are complete. The reply should state what changed, what was confirmed as no-code, or why no change was needed.
 
 The executable persistence, batch, regeneration, and failure contracts are defined in [references/review-lifecycle.md](references/review-lifecycle.md).
 
@@ -98,11 +98,13 @@ The base HTML always supports:
 - Diff filtering, search and folding.
 - Dark/light themes.
 - Document, chapter, selected-text and line comments.
-- Left-selection and right-click comments, including selections that cross the line-number gutter.
+- Left-selection highlights exact repeated text on the current page; right-click exposes comment and AI explanation actions, including selections that cross the line-number gutter.
+- Selected-code AI explanations stream into an inline box below the code and can be collapsed or closed.
 - Comment edit, delete, reply, resolve, summary popover and copy.
 - Persistence into the current HTML through the single local Easy CR helper, with a local pending draft while the service is unavailable.
 - No reviewed-copy export and no browser file picker.
 - Comment status follows `未处理 → 处理中 → 已解决`; edit, reply, or reopen returns a comment to `未处理`.
+- When an Agent resolves a sent batch, it writes an AI reply on each resolved comment with the processing result.
 - A top-right `发送评论给 AI` action sends only unprocessed comments. It shows a green success check briefly after synchronous acceptance.
 - Regeneration preserves historical comments. Exact anchors are retained when possible; otherwise code comments move near matching code in the same file. Deleted files safely no-op.
 - Previously reviewed additions use light green, current feedback changes use deep green, and deletions use light red.
@@ -123,7 +125,7 @@ When no editor is configured, the page contains no editor token or endpoint and 
 
 - Enhanced editors are selected from the built-in registry: `goland`, `idea`, and `vscode`.
 - Do not start `gopls`, MCP, or per-report background processes. All reports reuse the one LaunchAgent-managed Easy CR helper.
-- Do not add browser-time AI calls; all explanations are generated before the HTML is written.
+- Browser-time AI is limited to selected-code explanation through the local helper; it must not modify files or comment state. Business-step explanations are still generated before the HTML is written.
 - Do not infer online behavior from code alone.
 - Do not organize the main review by technical layer or directory.
 - Keep precise same-page semantic identifier highlighting on hold unless the user explicitly reopens that scope.
