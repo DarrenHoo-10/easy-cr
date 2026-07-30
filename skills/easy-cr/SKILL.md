@@ -50,24 +50,30 @@ When `easy-cr` is not installed yet, run `python3 "${SKILL_DIR}/../../scripts/in
    - Keep test-file diffs out of chapter guidance; they remain available in complete Diff.
    - Dependency files and pure import-only changes stay in complete Diff.
    - Do not create a catch-all “补充其他改动” chapter. If production Diff cannot be mapped to a business chapter, stop and fix the manifest.
-6. Render:
+6. Create one review directory for this technical plan:
+   - Use `.codex-artifacts/YYYY-MM-DD-<manifest subject>/`; `subject` is the actual technical-plan name, so different plans use different directories.
+   - Keep its manifest at `manifest.json` and its report at `review.html`.
+   - Sanitize path separators and punctuation in the technical-plan title, but keep readable Chinese text.
+   - Regenerate feedback rounds into the same directory and `review.html` path so historical comments remain attached.
+7. Render:
 
 ```bash
 python3 "${SKILL_DIR}/scripts/build_review.py" \
-  --manifest /absolute/path/to/review-manifest.json \
-  --output /absolute/path/to/repo/.codex-artifacts/review-<short-id>.html
+  --manifest /absolute/path/to/repo/.codex-artifacts/YYYY-MM-DD-技术方案名称/manifest.json
 ```
 
-For a legacy v1 manifest, also pass `--repo`, `--base`, and `--head`.
+The renderer defaults to `.codex-artifacts/YYYY-MM-DD-技术方案名称/review.html`. Pass
+`--output` only when regenerating a known historical path or supporting a legacy
+workflow. For a legacy v1 manifest, also pass `--repo`, `--base`, and `--head`.
 
-7. Validate:
+8. Validate:
    - No unresolved `@@TOKEN@@`.
    - Inline JavaScript compiles with `new Function(...)`.
    - Business stages read smoothly from top to bottom.
    - Do not stage or commit review artifacts unless requested.
-8. Open the HTML and return a clickable absolute path.
-9. The report uses the single Easy CR helper at `127.0.0.1:64346` to persist comments into the current HTML. The top-right `发送评论给 AI` button sends only `pending` comments, marks them `processing`, and resumes the originating Codex/Claude session with the batch id.
-10. When an Agent receives an Easy CR comment batch, run:
+9. Open the HTML and return a clickable absolute path.
+10. The report uses the single Easy CR helper at `127.0.0.1:64346` to persist comments into the current HTML. The top-right `发送评论给 AI` button sends only `pending` comments, marks them `processing`, and resumes the originating Codex/Claude session with the batch id.
+11. When an Agent receives an Easy CR comment batch, run:
 
 ```bash
 easy-cr comments /absolute/path/to/review.html --json
@@ -108,6 +114,7 @@ The base HTML always supports:
 - A top-right `发送评论给 AI` action sends only unprocessed comments. It shows a green success check briefly after synchronous acceptance.
 - Regeneration preserves historical comments. Exact anchors are retained when possible; otherwise code comments move near matching code in the same file. Deleted files safely no-op.
 - Previously reviewed additions use light green, current feedback changes use deep green, and deletions use light red.
+- The report header explains all code colors: additions, feedback changes, deletions, peer-step changes, and comment locations.
 - Previous and next navigation both name their destination; the outer edges return to the chapter overview.
 - `Enter` saves; `Command+Enter` and `Shift+Enter` insert a newline.
 

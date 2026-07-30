@@ -36,7 +36,16 @@ button { color:inherit }
 .brand-mark { display:grid; place-items:center; width:30px; height:30px; border-radius:8px; color:#fff; background:var(--primary); font-size:15px }
 .report-heading { min-width:0; flex:1 }
 .report-heading h1 { margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:18px; line-height:24px }
-.report-heading p { margin:2px 0 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:11px }
+.report-subline { display:flex; align-items:center; gap:10px; min-width:0; margin-top:2px; color:var(--muted); font-size:11px }
+.report-meta { flex:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.diff-legend { display:flex; align-items:center; gap:8px; min-width:0; white-space:nowrap }
+.legend-item { display:inline-flex; align-items:center; gap:4px }
+.legend-swatch { width:11px; height:11px; border:1px solid var(--border); border-radius:3px }
+.legend-swatch.add { border-color:color-mix(in srgb,var(--success) 28%,var(--border)); background:var(--success-soft) }
+.legend-swatch.iteration { border-color:var(--iteration-change-rail); background:var(--iteration-change) }
+.legend-swatch.del { border-color:color-mix(in srgb,var(--danger) 28%,var(--border)); background:var(--danger-soft) }
+.legend-swatch.peer { background:var(--surface-strong) }
+.legend-swatch.comment { border-color:var(--comment); background:var(--comment-soft) }
 .top-actions { flex:none; display:flex; align-items:center; gap:7px }
 .metric,.action { min-height:34px; padding:7px 10px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--muted); font-size:12px }
 .metric b { color:var(--text); margin-right:3px }
@@ -256,6 +265,7 @@ body.semantic-enabled .code-identifier:hover { color:var(--primary); text-decora
 @media(max-width:900px) {
   .topbar { position:relative; flex-wrap:wrap; padding:10px 14px }
   .report-heading { order:3; flex-basis:100% }
+  .report-subline,.diff-legend { flex-wrap:wrap; white-space:normal }
   .top-actions { margin-left:auto }
   .overview-shell,.full-diff-shell,.guided-shell { display:block }
   .chapter-sidebar,.full-sidebar,.step-sidebar { position:relative; top:0; width:100%; height:auto; border-right:0; border-bottom:1px solid var(--border) }
@@ -279,7 +289,16 @@ body.semantic-enabled .code-identifier:hover { color:var(--primary); text-decora
   <button class="brand" id="home-button" type="button" aria-label="返回报告首页"><span class="brand-mark">CR</span><span>Easy CR</span></button>
   <div class="report-heading">
     <h1>@@SUBJECT@@</h1>
-    <p>@@SUBTITLE@@ · CR 范围：@@SCOPE@@</p>
+    <div class="report-subline">
+      <span class="report-meta">@@SUBTITLE@@</span>
+      <span class="diff-legend" aria-label="代码颜色说明">
+        <span class="legend-item"><i class="legend-swatch add"></i>新增代码</span>
+        <span class="legend-item"><i class="legend-swatch iteration"></i>评论后修改</span>
+        <span class="legend-item"><i class="legend-swatch del"></i>删除代码</span>
+        <span class="legend-item"><i class="legend-swatch peer"></i>其他步骤改动</span>
+        <span class="legend-item"><i class="legend-swatch comment"></i>评论位置</span>
+      </span>
+    </div>
   </div>
   <div class="top-actions">
     <span class="metric"><b>@@REPO_COUNT@@</b> repos</span>

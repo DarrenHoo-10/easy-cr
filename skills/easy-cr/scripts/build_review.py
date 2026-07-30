@@ -13,6 +13,7 @@ import shlex
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,9 @@ REVIEW_STATE_PATTERN = re.compile(
     r"(?P<payload>.*?)</script>\s*"
     rf"{re.escape(REVIEW_STATE_END)}",
     re.DOTALL,
+)
+INVALID_ARTIFACT_COMPONENT = re.compile(
+    r'[<>:"/\\|?*\x00-\x1f：，。！？；、（）【】《》“”‘’]'
 )
 
 
@@ -955,6 +959,40 @@ def report_identifier(
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def artifact_directory_name(
+    subject: str,
+    *,
+    today: date | None = None,
+) -> str:
+    cleaned = INVALID_ARTIFACT_COMPONENT.sub("-", subject.strip())
+    cleaned = re.sub(r"\s+", "-", cleaned)
+    cleaned = re.sub(r"-{2,}", "-", cleaned).strip(" .-")
+    cleaned = cleaned[:80].rstrip(" .-") or "技术方案"
+    return f"{(today or date.today()).isoformat()}-{cleaned}"
+
+
+def default_report_output(
+    repo: Path,
+    subject: str,
+    *,
+    manifest_path: Path | None = None,
+) -> Path:
+    artifacts_root = repo / ".codex-artifacts"
+    if manifest_path is not None:
+        manifest_parent = manifest_path.expanduser().resolve().parent
+        try:
+            relative_parent = manifest_parent.relative_to(artifacts_root.resolve())
+        except ValueError:
+            relative_parent = None
+        if relative_parent is not None and len(relative_parent.parts) == 1:
+            return manifest_parent / "review.html"
+    return (
+        artifacts_root
+        / artifact_directory_name(subject)
+        / "review.html"
+    )
+
+
 def _comment_candidate(
     repository: RepositoryReview,
     path: str,
@@ -1081,7 +1119,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--base")
     parser.add_argument("--head")
     parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help=(
+            "输出 HTML；省略时使用 "
+            "<repo>/.codex-artifacts/YYYY-MM-DD-技术方案名称/review.html"
+        ),
+    )
     parser.add_argument("--context", type=int, default=10)
     parser.add_argument("--config-file", type=Path, default=CONFIG_PATH)
     parser.add_argument("--token-file", type=Path)
@@ -1092,19 +1137,32 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.context < 0 or args.context > 100:
         raise ValueError("context must be between 0 and 100")
-    manifest_path = args.manifest.expanduser()
+    manifest_path = args.manifest.expanduser().resolve()
     raw_manifest = json.loads(manifest_path.read_text())
     if not isinstance(raw_manifest, dict):
         raise ValueError("manifest root must be an object")
-    output = args.output.expanduser().resolve()
+    schema_version, specs = resolve_repository_specs(raw_manifest, args)
+    repositories = load_repositories(specs, args.context)
+    subject = str(
+        raw_manifest.get("subject")
+        or repositories[0].subject
+        or "Code Review"
+    )
+    output = (
+        args.output.expanduser().resolve()
+        if args.output is not None
+        else default_report_output(
+            repositories[0].root,
+            subject,
+            manifest_path=manifest_path,
+        )
+    )
     previous_html = output.read_text() if output.is_file() else None
     previous_state = (
         extract_review_state(previous_html)
         if previous_html is not None
         else None
     )
-    schema_version, specs = resolve_repository_specs(raw_manifest, args)
-    repositories = load_repositories(specs, args.context)
     mark_iteration_changes(
         repositories,
         previous_state if has_sent_review_feedback(previous_html) else None,
@@ -1197,7 +1255,6 @@ def main(argv: list[str] | None = None) -> int:
             f"<code>{html.escape(short_commit)}</code> · "
             f"{html.escape(first.author)} · {html.escape(first.authored_at)}"
         ),
-        "SCOPE": inline_markup(manifest["scope"]),
         "FILE_COUNT": str(len(files)),
         "REPO_COUNT": str(len(repositories)),
         "ADDED": str(added),

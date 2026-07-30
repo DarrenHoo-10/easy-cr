@@ -505,10 +505,60 @@ class TemplateContractTest(unittest.TestCase):
         self.assertIn(".metric.minus {", template)
         self.assertIn(".line.add .line-no", template)
         self.assertIn(".line.del .line-no", template)
+        self.assertIn('aria-label="代码颜色说明"', template)
+        self.assertIn("新增代码", template)
+        self.assertIn("评论后修改", template)
+        self.assertIn("删除代码", template)
+        self.assertIn("其他步骤改动", template)
+        self.assertIn("评论位置", template)
+        self.assertNotIn("CR 范围：@@SCOPE@@", template)
         self.assertIn('id="home-button"', template)
         self.assertIn("homeButton.addEventListener('click'", template)
         self.assertNotIn('<div class="boundary">', template)
         self.assertNotIn(".chapter-row.active", template)
+
+    def test_default_report_output_uses_date_and_subject_directory(self):
+        name = build_review.artifact_directory_name(
+            ' 任务回显 / 自动提交：方案? ',
+            today=build_review.date(2026, 7, 30),
+        )
+
+        self.assertEqual(name, "2026-07-30-任务回显-自动提交-方案")
+        self.assertEqual(
+            build_review.default_report_output(
+                Path("/repo"),
+                "任务回显与自动提交",
+            ).name,
+            "review.html",
+        )
+        self.assertEqual(
+            build_review.default_report_output(
+                Path("/repo"),
+                "任务回显与自动提交",
+            ).parent.parent,
+            Path("/repo/.codex-artifacts"),
+        )
+        self.assertEqual(
+            build_review.default_report_output(
+                Path("/repo"),
+                "任务回显与自动提交",
+                manifest_path=Path(
+                    "/repo/.codex-artifacts/2026-07-29-旧方案/manifest.json"
+                ),
+            ),
+            Path("/repo/.codex-artifacts/2026-07-29-旧方案/review.html"),
+        )
+
+        self.assertNotEqual(
+            build_review.artifact_directory_name(
+                "任务回显与自动提交",
+                today=build_review.date(2026, 7, 30),
+            ),
+            build_review.artifact_directory_name(
+                "账期优化",
+                today=build_review.date(2026, 7, 30),
+            ),
+        )
 
     def test_guided_interactions_highlight_references_and_locate_comments(self):
         template = TEMPLATE_PATH.read_text()
@@ -1160,6 +1210,34 @@ class BuildReviewTest(unittest.TestCase):
             output = root / "review.html"
             self.build(repo, manifest, output, config)
             self.assertNotIn("untracked.go", output.read_text())
+
+    def test_build_without_output_uses_review_subdirectory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            repo, manifest = self.make_repo(root)
+            payload = json.loads(manifest.read_text())
+            payload["subject"] = "任务回显 / 自动提交"
+            manifest.write_text(json.dumps(payload, ensure_ascii=False))
+            config = root / "config.json"
+            easy_cr_config.write_editor("none", config)
+
+            build_review.main([
+                "--repo", str(repo),
+                "--base", "HEAD^",
+                "--head", "HEAD",
+                "--manifest", str(manifest),
+                "--config-file", str(config),
+                "--token-file", str(root / "token"),
+            ])
+
+            output = (
+                repo
+                / ".codex-artifacts"
+                / build_review.artifact_directory_name(payload["subject"])
+                / "review.html"
+            )
+            self.assertTrue(output.is_file())
+            self.assertIn("任务回显 / 自动提交", output.read_text())
 
     def test_v2_manifest_renders_one_chapter_across_three_repositories(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -138,6 +138,10 @@ Codex 用户初始化后新建一个任务，让 Easy CR skill 生效。
 ```
 
 Easy CR 会分析改动、还原技术方案、生成 HTML 并在浏览器中打开。
+每次 CR 默认保存在目标仓库的
+`.codex-artifacts/YYYY-MM-DD-技术方案名称/` 目录中。目录名称取当前报告
+`subject`，不同方案会进入不同目录；其中 `manifest.json` 记录报告结构，
+`review.html` 用于评审。同一轮评论后的重新生成会继续复用这个目录。
 
 ### 4. 评论并直接发送给 AI
 
