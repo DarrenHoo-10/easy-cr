@@ -1,0 +1,20 @@
+{
+  "name": "easy-cr",
+  "interface": {
+    "displayName": "Easy CR"
+  },
+  "plugins": [
+    {
+      "name": "easy-cr",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
