@@ -58,7 +58,7 @@ from review_comments import (
 )
 
 
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 SKILL_DIR = SCRIPT_DIR.parent
 REPO_ROOT = SKILL_DIR.parents[1]
 SETUP_JETBRAINS_SCRIPT = SCRIPT_DIR / "setup_jetbrains_plugin.py"

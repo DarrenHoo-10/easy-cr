@@ -1686,13 +1686,21 @@ class HelperServiceTest(unittest.TestCase):
     def test_send_comment_batch_marks_only_pending_comments_processing(self):
         launched: list[tuple[dict, Path]] = []
         opened: list[str] = []
+        events: list[str] = []
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             report = self.make_report(root)
             store = easy_cr_helper.HelperStore(
                 root / "config",
-                launcher=lambda agent, path: launched.append((agent, path)),
-                client_opener=lambda agent: opened.append(agent["sessionId"]) or True,
+                launcher=lambda agent, path: (
+                    events.append("launch"),
+                    launched.append((agent, path)),
+                ),
+                client_opener=lambda agent: (
+                    events.append("open"),
+                    opened.append(agent["sessionId"]),
+                    True,
+                )[-1],
             )
             registration = store.register_report({
                 "reportId": "report-1",
@@ -1756,6 +1764,7 @@ class HelperServiceTest(unittest.TestCase):
         self.assertEqual(embedded["comments"][1]["aiBatchId"], "old-batch")
         self.assertEqual(len(launched), 1)
         self.assertEqual(opened, ["session-1"])
+        self.assertEqual(events, ["open", "launch"])
         self.assertEqual(launched[0][0]["reportSubject"], "帐期优化")
         self.assertEqual(launched[0][0]["reviewBatchId"], "batch-1")
         self.assertEqual(launched[0][0]["reviewCommentIds"], ["c1"])
@@ -1984,6 +1993,46 @@ class HelperServiceTest(unittest.TestCase):
         self.assertEqual(submit.call_args.args[0], session_id)
         self.assertIn("批次 batch-1", submit.call_args.args[1])
         popen.assert_not_called()
+
+    def test_default_launcher_falls_back_to_codex_resume_when_ipc_is_unavailable(self):
+        report = Path("/repo/.codex-artifacts/review.html")
+        session_id = "019f88f5-e5d7-7ff1-bac3-7c46ab1fd365"
+        agent = {
+            "client": "codex",
+            "sessionId": session_id,
+            "cwd": "/repo",
+            "reportSubject": "帐期优化",
+            "reviewBatchId": "batch-1",
+            "reviewCommentIds": ["c1"],
+        }
+        with mock.patch.object(
+            easy_cr_helper,
+            "submit_codex_turn",
+            side_effect=RuntimeError("no-client-found"),
+        ), mock.patch.object(
+            easy_cr_helper,
+            "agent_command",
+            return_value=[
+                str(easy_cr_helper.CODEX_APP_COMMAND),
+                "exec",
+                "resume",
+                session_id,
+                "prompt",
+            ],
+        ), mock.patch.object(subprocess, "Popen") as popen:
+            easy_cr_helper._default_launcher(agent, report)
+
+        popen.assert_called_once()
+        self.assertEqual(
+            popen.call_args.args[0][:4],
+            [
+                str(easy_cr_helper.CODEX_APP_COMMAND),
+                "exec",
+                "resume",
+                session_id,
+            ],
+        )
+        self.assertEqual(popen.call_args.kwargs["cwd"], Path("/repo"))
 
     def test_launch_agent_uses_one_fixed_label_and_dedicated_port(self):
         payload = easy_cr_helper.launch_agent_payload(

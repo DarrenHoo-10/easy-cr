@@ -51,7 +51,8 @@ MAX_REQUEST_BYTES = 2 * 1024 * 1024
 CODEX_APP_COMMAND = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
 CODEX_IPC_SOCKET = Path.home() / ".codex" / "ipc" / "ipc.sock"
 CODEX_IPC_REQUEST_VERSION = 1
-CODEX_IPC_TIMEOUT_SECONDS = 10.0
+CODEX_IPC_TIMEOUT_SECONDS = 3.0
+CODEX_CLIENT_OPEN_SETTLE_SECONDS = 1.0
 
 
 class ConflictError(ValueError):
@@ -490,16 +491,23 @@ def _default_client_opener(agent: dict[str, Any]) -> bool:
     if result.returncode:
         detail = result.stderr.strip() or result.stdout.strip() or "无法打开 Codex 原任务"
         raise RuntimeError(detail)
+    time.sleep(CODEX_CLIENT_OPEN_SETTLE_SECONDS)
     return True
 
 
 def _default_launcher(agent: dict[str, Any], report_path: Path) -> None:
     if agent.get("client") == "codex":
-        submit_codex_turn(
-            str(agent.get("sessionId") or ""),
-            agent_prompt(agent, report_path),
-        )
-        return
+        try:
+            submit_codex_turn(
+                str(agent.get("sessionId") or ""),
+                agent_prompt(agent, report_path),
+            )
+            return
+        except RuntimeError:
+            # Some Codex Desktop builds expose the IPC router without an owner
+            # window that can accept thread-follower requests. Resume through
+            # the official CLI so the same session still receives the batch.
+            pass
     cwd = Path(str(agent.get("cwd") or report_path.parent)).resolve()
     arguments = agent_command(agent, report_path)
     if not Path(arguments[0]).is_file():
@@ -735,6 +743,15 @@ class HelperStore:
             updated = replace_comments_block(source, embedded)
             mode = stat.S_IMODE(path.stat().st_mode)
             _atomic_write(path, updated.encode(), mode=mode)
+            client_opened = False
+            client_open_error = None
+            if agent.get("client") == "codex":
+                try:
+                    client_opened = bool(self.client_opener(agent))
+                    if not client_opened:
+                        client_open_error = "未能打开原 Codex 任务"
+                except (OSError, RuntimeError, ValueError) as error:
+                    client_open_error = str(error)
             try:
                 self.launcher(launch_agent, path)
             except Exception:
@@ -753,13 +770,10 @@ class HelperStore:
                 "updatedAt": time.time(),
             }
             if agent.get("client") == "codex":
-                try:
-                    completion["clientOpened"] = bool(self.client_opener(agent))
-                    if not completion["clientOpened"]:
-                        completion["clientOpenError"] = "任务已恢复，但未能打开原窗口"
-                except (OSError, RuntimeError, ValueError) as error:
-                    completion["clientOpenError"] = str(error)
-                if completion["clientOpened"]:
+                completion["clientOpened"] = client_opened
+                if client_open_error:
+                    completion["clientOpenError"] = client_open_error
+                if client_opened:
                     completion["status"] = "opened"
             entry["completion"] = completion
             self._save(registry)
