@@ -92,8 +92,13 @@ class PluginManifestTest(unittest.TestCase):
         self.assertIn("Never cut through a multi-line function signature", skill)
         self.assertIn("entire unit as a gray peer-step change", skill)
         self.assertIn("partly highlighted and partly gray Diff", skill)
+        self.assertIn("Line count is a review-load signal, never a split boundary", skill)
+        self.assertIn("Generate sections in two passes", skill)
+        self.assertIn("Business singularity", skill)
         self.assertIn("完整逻辑单元", schema)
         self.assertIn("不得在同一逻辑单元内部出现部分高亮、部分置灰", schema)
+        self.assertIn("200–300 行", schema)
+        self.assertIn("低置信度时优先合并", schema)
         self.assertNotIn("Use “补充其他改动”", skill)
 
 
@@ -574,7 +579,11 @@ class TemplateContractTest(unittest.TestCase):
         self.assertNotIn(">收起</button><button", template)
         self.assertIn("applyGuidedDisplayMode", template)
         self.assertIn("peer-step-change", template)
-        self.assertIn("line.dataset.stepOwner === currentStepKey", template)
+        self.assertIn("line.dataset.stepOwner === currentOwnerKey", template)
+        self.assertIn("function currentSection()", template)
+        self.assertIn("sectionId:activeView === 'guided'", template)
+        self.assertIn("上一小节", template)
+        self.assertIn("下一小节", template)
         self.assertIn("values.forEach(comment => {", template)
         self.assertNotIn("values.slice(0, 4).forEach(comment => {", template)
         self.assertIn("main.className = 'mini-comment-main'", template)
@@ -643,6 +652,41 @@ class TemplateContractTest(unittest.TestCase):
         )
         self.assertIn('data-step-owner="chapter:first"', rendered)
         self.assertIn('data-step-owner="chapter:second"', rendered)
+
+    def test_reused_logical_unit_must_keep_the_same_boundary(self):
+        chapters = [{
+            "steps": [{
+                "sections": [
+                    {
+                        "code": [{
+                            "fileKey": "repo:service.go",
+                            "ranges": [{
+                                "unitId": "shared-unit",
+                                "unitType": "statements",
+                                "symbol": "",
+                                "start": 4,
+                                "end": 8,
+                            }],
+                        }],
+                    },
+                    {
+                        "code": [{
+                            "fileKey": "repo:service.go",
+                            "ranges": [{
+                                "unitId": "shared-unit",
+                                "unitType": "statements",
+                                "symbol": "",
+                                "start": 4,
+                                "end": 9,
+                            }],
+                        }],
+                    },
+                ],
+            }],
+        }]
+
+        with self.assertRaisesRegex(ValueError, "reuse the same boundary"):
+            build_review.validate_logical_unit_consistency(chapters)
 
     def test_shared_logical_unit_is_owned_as_a_whole_by_first_step(self):
         references = [
@@ -1236,6 +1280,22 @@ class CliInstallerTest(unittest.TestCase):
 
 
 class BuildReviewTest(unittest.TestCase):
+    def assert_inline_javascript_compiles(self, rendered: str) -> None:
+        scripts = re.findall(r"<script>(.*?)</script>", rendered, re.DOTALL)
+        self.assertEqual(len(scripts), 1)
+        result = subprocess.run(
+            [
+                "node",
+                "-e",
+                "new Function(require('fs').readFileSync(0, 'utf8'))",
+            ],
+            input=scripts[0],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_template_replacement_does_not_reprocess_review_content(self):
         rendered = build_review.replace_template(
             "<main>@@DIFFS@@</main>",
@@ -1524,6 +1584,234 @@ class BuildReviewTest(unittest.TestCase):
         self.assertGreaterEqual(rendered.count("service/shared.go"), 2)
         self.assertIn('"schemaVersion": 2', rendered)
         self.assertIn('"displayMode": "diff-only"', rendered)
+        self.assertIn('"implicit": true', rendered)
+
+    def test_business_sections_render_as_review_pages_with_stable_ownership(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            repo = self.make_named_repo(
+                root,
+                "repo",
+                "service.go",
+                (
+                    "package sample\n\n"
+                    "func Validate() bool { return false }\n\n"
+                    "func Persist() bool { return false }\n"
+                ),
+                (
+                    "package sample\n\n"
+                    "func Validate() bool { return true }\n\n"
+                    "func Persist() bool { return true }\n"
+                ),
+            )
+            manifest = root / "manifest-sections.json"
+            manifest.write_text(json.dumps({
+                "schema_version": 2,
+                "subject": "业务小节",
+                "scope": "同一步骤内完成校验和持久化。",
+                "summary": "按业务闭环评审。",
+                "boundary": "仅用于测试。",
+                "repositories": [{
+                    "id": "repo",
+                    "root": str(repo),
+                    "base": "HEAD^",
+                    "head": "HEAD",
+                }],
+                "chapters": [{
+                    "id": "flow",
+                    "title": "提交流程",
+                    "steps": [{
+                        "id": "submit",
+                        "title": "提交",
+                        "explanation": "校验后持久化。",
+                        "sections": [
+                            {
+                                "id": "validate",
+                                "title": "校验提交条件",
+                                "goal": "确认请求允许提交。",
+                                "decision": "满足条件才继续。",
+                                "result": "得到可提交请求。",
+                                "explanation": "完成一次业务判断。",
+                                "split_rationale": "本节没有持久化副作用。",
+                                "split_confidence": 0.92,
+                                "depends_on": [],
+                                "code": [{
+                                    "repo_id": "repo",
+                                    "path": "service.go",
+                                    "display_mode": "guided",
+                                    "ranges": [{
+                                        "unit_id": "validate-call",
+                                        "unit_type": "function",
+                                        "symbol": "Validate",
+                                    }],
+                                }],
+                            },
+                            {
+                                "id": "persist",
+                                "title": "持久化提交结果",
+                                "goal": "保存通过校验的结果。",
+                                "decision": "写入和错误处理一起评审。",
+                                "result": "提交结果完成持久化。",
+                                "explanation": "完成一次状态变化。",
+                                "split_rationale": "本节从可提交请求开始，以写入完成结束。",
+                                "split_confidence": 0.95,
+                                "depends_on": ["validate"],
+                                "code": [{
+                                    "repo_id": "repo",
+                                    "path": "service.go",
+                                    "display_mode": "guided",
+                                    "ranges": [{
+                                        "unit_id": "persist-call",
+                                        "unit_type": "function",
+                                        "symbol": "Persist",
+                                    }],
+                                }],
+                            },
+                        ],
+                    }],
+                }],
+            }, ensure_ascii=False))
+            config = root / "config.json"
+            easy_cr_config.write_editor("none", config)
+            output = root / "review.html"
+
+            build_review.main([
+                "--manifest", str(manifest),
+                "--output", str(output),
+                "--config-file", str(config),
+                "--token-file", str(root / "token"),
+            ])
+            rendered = output.read_text()
+
+        chapter_payload = json.loads(
+            rendered.split("const chapters = ", 1)[1].split(";\n", 1)[0]
+        )
+        step = chapter_payload[0]["steps"][0]
+        self.assertEqual([item["id"] for item in step["sections"]], ["validate", "persist"])
+        self.assertEqual(step["sections"][0]["ownerKey"], "flow:submit:validate")
+        self.assertEqual(step["sections"][1]["dependsOn"], ["validate"])
+        self.assertEqual(step["sections"][0]["reviewMetrics"]["changedLines"], 2)
+        self.assertIn('data-step-owner="flow:submit:validate"', rendered)
+        self.assertIn('data-step-owner="flow:submit:persist"', rendered)
+        self.assertIn("activeSectionIndex", rendered)
+        self.assertIn("sectionId:activeView === 'guided'", rendered)
+        self.assert_inline_javascript_compiles(rendered)
+
+    def test_business_section_requires_boundary_quality_evidence(self):
+        item = build_review.DiffFile(
+            "service.go",
+            lines=[build_review.DiffLine("+value", "add", new_line=1)],
+            added=1,
+        )
+        repository = build_review.RepositoryReview(
+            id="repo",
+            label="repo",
+            root=Path("/repo"),
+            base="HEAD^",
+            head="HEAD",
+            context=10,
+            revision={
+                "headCommit": "a" * 40,
+                "reviewType": "revision",
+                "fingerprint": "a" * 40,
+            },
+            files=[item],
+            subject="test",
+            author="test",
+            authored_at="test",
+        )
+        section = {
+            "id": "write",
+            "title": "写入结果",
+            "goal": "保存结果。",
+            "result": "结果已保存。",
+            "explanation": "完成一次状态变化。",
+            "split_confidence": 0.8,
+            "code": [{
+                "repo_id": "repo",
+                "path": "service.go",
+                "display_mode": "guided",
+                "ranges": [{
+                    "unit_id": "write-result",
+                    "unit_type": "statements",
+                    "start": 1,
+                    "end": 1,
+                }],
+            }],
+        }
+
+        with self.assertRaisesRegex(ValueError, "split_rationale"):
+            build_review.normalize_review_section(
+                section,
+                {"repo": repository},
+                "section",
+                "flow:submit",
+            )
+
+    def test_oversized_business_section_requires_indivisibility_reason(self):
+        item = build_review.DiffFile(
+            "service.go",
+            lines=[
+                build_review.DiffLine(f"+value{i}", "add", new_line=i)
+                for i in range(1, 302)
+            ],
+            added=301,
+        )
+        repository = build_review.RepositoryReview(
+            id="repo",
+            label="repo",
+            root=Path("/repo"),
+            base="HEAD^",
+            head="HEAD",
+            context=10,
+            revision={
+                "headCommit": "a" * 40,
+                "reviewType": "revision",
+                "fingerprint": "a" * 40,
+            },
+            files=[item],
+            subject="test",
+            author="test",
+            authored_at="test",
+        )
+        section = {
+            "id": "transaction",
+            "title": "提交事务",
+            "goal": "原子写入状态。",
+            "result": "事务完成或回滚。",
+            "explanation": "事务和补偿不能拆开。",
+            "split_rationale": "本节表达一次原子事务。",
+            "split_confidence": 0.76,
+            "code": [{
+                "repo_id": "repo",
+                "path": "service.go",
+                "display_mode": "guided",
+                "ranges": [{
+                    "unit_id": "transaction",
+                    "unit_type": "statements",
+                    "start": 1,
+                    "end": 301,
+                }],
+            }],
+        }
+
+        with self.assertRaisesRegex(ValueError, "oversized_reason"):
+            build_review.normalize_review_section(
+                section,
+                {"repo": repository},
+                "section",
+                "flow:submit",
+            )
+
+        section["oversized_reason"] = "事务、回滚和补偿共享原子性边界。"
+        normalized = build_review.normalize_review_section(
+            section,
+            {"repo": repository},
+            "section",
+            "flow:submit",
+        )
+        self.assertEqual(normalized["reviewMetrics"]["sizeBand"], "oversized")
+        self.assertEqual(normalized["reviewMetrics"]["changedLines"], 301)
 
     def test_overlapping_step_ranges_render_with_first_step_ownership(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -1591,7 +1879,7 @@ class BuildReviewTest(unittest.TestCase):
 
         self.assertIn('data-step-owner="flow:first"', rendered)
         self.assertNotIn('data-step-owner="flow:second"', rendered)
-        self.assertIn("line.dataset.stepOwner === currentStepKey", rendered)
+        self.assertIn("line.dataset.stepOwner === currentOwnerKey", rendered)
 
     def test_go_function_symbol_resolves_complete_logical_unit(self):
         with tempfile.TemporaryDirectory() as temp:

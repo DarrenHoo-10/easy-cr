@@ -45,6 +45,8 @@ HUNK_PATTERN = re.compile(
 IDENTIFIER_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 DISPLAY_MODES = frozenset({"diff-only", "compact-context", "guided"})
 LOGICAL_UNIT_TYPES = frozenset({"function", "block", "statements", "range"})
+REVIEW_LOAD_CONSIDER_SPLIT = 200
+REVIEW_LOAD_EXPLAIN_OVERSIZED = 300
 DEPENDENCY_FILES = frozenset({
     "go.mod", "go.sum", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
     "bun.lock", "bun.lockb", "cargo.lock", "poetry.lock", "pipfile.lock",
@@ -467,11 +469,11 @@ def step_references_by_file(
     references: dict[str, list[tuple[str, dict[str, Any]]]] = {}
     for chapter in chapters:
         for step in chapter["steps"]:
-            step_key = f"{chapter['id']}:{step['id']}"
-            for reference in step["code"]:
-                references.setdefault(reference["fileKey"], []).append(
-                    (step_key, reference)
-                )
+            for section in step["sections"]:
+                for reference in section["code"]:
+                    references.setdefault(reference["fileKey"], []).append(
+                        (section["ownerKey"], reference)
+                    )
     return references
 
 
@@ -906,6 +908,172 @@ def normalize_code_reference(
     }
 
 
+def normalize_code_references(
+    raw: Any,
+    repositories: dict[str, RepositoryReview],
+    context: str,
+) -> list[dict[str, Any]]:
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(f"{context} must be a non-empty list")
+    normalized = [
+        normalize_code_reference(
+            reference,
+            repositories,
+            f"{context}[{code_index}]",
+        )
+        for code_index, reference in enumerate(raw)
+    ]
+    return [
+        reference
+        for reference in normalized
+        if repositories[reference["repoId"]]
+        .files_by_path[reference["path"]]
+        .category != "test"
+    ]
+
+
+def reference_changed_line_keys(
+    reference: dict[str, Any],
+    repositories: dict[str, RepositoryReview],
+) -> set[tuple[str, str, str, int]]:
+    item = repositories[reference["repoId"]].files_by_path[reference["path"]]
+    ranges = reference.get("ranges") or []
+    keys: set[tuple[str, str, str, int]] = set()
+    for line in item.lines:
+        if line.kind not in {"add", "del"}:
+            continue
+        number = line.new_line if line.new_line is not None else line.old_line
+        if number is None:
+            continue
+        if ranges and not any(
+            value["start"] <= number <= value["end"]
+            for value in ranges
+        ):
+            continue
+        keys.add((reference["repoId"], reference["path"], line.kind, number))
+    return keys
+
+
+def section_review_metrics(
+    code: list[dict[str, Any]],
+    repositories: dict[str, RepositoryReview],
+) -> dict[str, Any]:
+    changed_lines: set[tuple[str, str, str, int]] = set()
+    logical_units: set[tuple[str, str]] = set()
+    files: set[str] = set()
+    for reference in code:
+        changed_lines.update(reference_changed_line_keys(reference, repositories))
+        files.add(reference["fileKey"])
+        ranges = reference.get("ranges") or []
+        if ranges:
+            logical_units.update(
+                (reference["fileKey"], value["unitId"])
+                for value in ranges
+            )
+        else:
+            logical_units.add((reference["fileKey"], "file"))
+    changed_count = len(changed_lines)
+    if changed_count > REVIEW_LOAD_EXPLAIN_OVERSIZED:
+        size_band = "oversized"
+    elif changed_count >= REVIEW_LOAD_CONSIDER_SPLIT:
+        size_band = "consider-split"
+    else:
+        size_band = "focused"
+    return {
+        "changedLines": changed_count,
+        "logicalUnits": len(logical_units),
+        "files": len(files),
+        "sizeBand": size_band,
+    }
+
+
+def normalize_string_list(value: Any, context: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(
+        isinstance(item, str) and item.strip()
+        for item in value
+    ):
+        raise ValueError(f"{context} must be a list of non-empty strings")
+    return [item.strip() for item in value]
+
+
+def normalize_review_section(
+    raw: Any,
+    repositories: dict[str, RepositoryReview],
+    context: str,
+    owner_key: str,
+) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError(f"{context} must be an object")
+    section_id = valid_identifier(raw.get("id"), f"{context}.id")
+    code_raw = raw.get("code")
+    code = normalize_code_references(code_raw, repositories, f"{context}.code")
+    if not code:
+        raise ValueError(f"{context}.code must include changed production code")
+    if len(code) != len(code_raw):
+        raise ValueError(
+            f"{context}.code must not include test files; keep them in complete Diff"
+        )
+    for code_index, reference in enumerate(code_raw):
+        ranges = reference.get("ranges") if isinstance(reference, dict) else None
+        if not isinstance(ranges, list) or not ranges:
+            raise ValueError(
+                f"{context}.code[{code_index}].ranges must identify complete "
+                "logical units"
+            )
+        if code[code_index]["displayMode"] != "guided":
+            raise ValueError(
+                f"{context}.code[{code_index}].display_mode must be guided "
+                "so the section shows only its logical units"
+            )
+        for range_index, value in enumerate(ranges):
+            if (
+                not isinstance(value, dict)
+                or not str(value.get("unit_id") or "").strip()
+            ):
+                raise ValueError(
+                    f"{context}.code[{code_index}].ranges[{range_index}].unit_id "
+                    "must be a stable identifier"
+                )
+    split_confidence = raw.get("split_confidence")
+    if (
+        not isinstance(split_confidence, (int, float))
+        or isinstance(split_confidence, bool)
+        or not 0 <= float(split_confidence) <= 1
+    ):
+        raise ValueError(f"{context}.split_confidence must be between 0 and 1")
+    section = {
+        "id": section_id,
+        "title": require_string(raw, "title", context),
+        "goal": require_string(raw, "goal", context),
+        "decision": str(raw.get("decision") or "").strip(),
+        "result": require_string(raw, "result", context),
+        "explanation": require_string(raw, "explanation", context),
+        "splitRationale": require_string(raw, "split_rationale", context),
+        "splitConfidence": float(split_confidence),
+        "dependsOn": normalize_string_list(
+            raw.get("depends_on"),
+            f"{context}.depends_on",
+        ),
+        "oversizedReason": str(raw.get("oversized_reason") or "").strip(),
+        "code": code,
+        "ownerKey": f"{owner_key}:{section_id}",
+        "implicit": False,
+    }
+    section["reviewMetrics"] = section_review_metrics(code, repositories)
+    if (
+        section["reviewMetrics"]["changedLines"]
+        > REVIEW_LOAD_EXPLAIN_OVERSIZED
+        and not section["oversizedReason"]
+    ):
+        raise ValueError(
+            f"{context}.oversized_reason is required when a business-complete "
+            f"section contains more than {REVIEW_LOAD_EXPLAIN_OVERSIZED} changed lines"
+        )
+    return section
+
+
 def normalized_chapter(
     raw: Any,
     chapter_index: int,
@@ -931,24 +1099,97 @@ def normalized_chapter(
         if step_id in step_ids:
             raise ValueError(f"duplicate step id in {chapter_id}: {step_id}")
         step_ids.add(step_id)
-        code = step.get("code")
-        if not isinstance(code, list) or not code:
-            raise ValueError(f"{step_context}.code must be a non-empty list")
-        normalized_code = [
-            normalize_code_reference(
-                reference,
-                repositories,
-                f"{step_context}.code[{code_index}]",
+        owner_key = f"{chapter_id}:{step_id}"
+        raw_sections = step.get("sections")
+        raw_code = step.get("code")
+        if raw_sections is not None and raw_code is not None:
+            raise ValueError(
+                f"{step_context} must use either code or sections, not both"
             )
-            for code_index, reference in enumerate(code)
-        ]
-        normalized_code = [
-            reference
-            for reference in normalized_code
-            if repositories[reference["repoId"]]
-            .files_by_path[reference["path"]]
-            .category != "test"
-        ]
+        if raw_sections is not None:
+            if not isinstance(raw_sections, list) or len(raw_sections) < 2:
+                raise ValueError(
+                    f"{step_context}.sections must contain at least two "
+                    "business-complete review sections"
+                )
+            normalized_sections = [
+                normalize_review_section(
+                    section,
+                    repositories,
+                    f"{step_context}.sections[{section_index}]",
+                    owner_key,
+                )
+                for section_index, section in enumerate(raw_sections)
+            ]
+            section_ids: set[str] = set()
+            owned_units: set[tuple[str, str]] = set()
+            for section_index, section in enumerate(normalized_sections):
+                section_context = f"{step_context}.sections[{section_index}]"
+                if section["id"] in section_ids:
+                    raise ValueError(
+                        f"duplicate section id in {chapter_id}:{step_id}: "
+                        f"{section['id']}"
+                    )
+                unknown = [
+                    dependency
+                    for dependency in section["dependsOn"]
+                    if dependency not in section_ids
+                ]
+                if unknown:
+                    raise ValueError(
+                        f"{section_context}.depends_on must reference earlier "
+                        f"sections: {', '.join(unknown)}"
+                    )
+                section_units = {
+                    (reference["fileKey"], value["unitId"])
+                    for reference in section["code"]
+                    for value in reference["ranges"]
+                }
+                if not section_units - owned_units:
+                    raise ValueError(
+                        f"{section_context} must own at least one new logical "
+                        "unit; merge a section that only repeats earlier context"
+                    )
+                owned_units.update(section_units)
+                section_ids.add(section["id"])
+            normalized_code = [
+                reference
+                for section in normalized_sections
+                for reference in section["code"]
+            ]
+        else:
+            normalized_code = normalize_code_references(
+                raw_code,
+                repositories,
+                f"{step_context}.code",
+            )
+            metrics = section_review_metrics(normalized_code, repositories)
+            normalized_sections = [{
+                "id": step_id,
+                "title": require_string(step, "title", step_context),
+                "goal": str(step.get("goal") or ""),
+                "decision": str(step.get("decision") or ""),
+                "result": str(step.get("result") or ""),
+                "explanation": require_string(step, "explanation", step_context),
+                "splitRationale": "",
+                "splitConfidence": None,
+                "dependsOn": [],
+                "oversizedReason": str(step.get("oversized_reason") or "").strip(),
+                "reviewMetrics": metrics,
+                "code": normalized_code,
+                "ownerKey": owner_key,
+                "implicit": True,
+            }]
+            if (
+                metrics["changedLines"] > REVIEW_LOAD_EXPLAIN_OVERSIZED
+                and not normalized_sections[0]["oversizedReason"]
+            ):
+                print(
+                    f"easy-cr: {step_context} 包含 {metrics['changedLines']} 行 Diff；"
+                    "请优先按业务逻辑拆成 sections，若不可安全拆分则填写 "
+                    "oversized_reason",
+                    file=sys.stderr,
+                )
         normalized_steps.append({
             "id": step_id,
             "title": require_string(step, "title", step_context),
@@ -957,6 +1198,7 @@ def normalized_chapter(
             "decision": str(step.get("decision") or ""),
             "result": str(step.get("result") or ""),
             "code": normalized_code,
+            "sections": normalized_sections,
         })
     return {
         "id": chapter_id,
@@ -1006,6 +1248,27 @@ def legacy_chapters(
         chapter_id = valid_identifier(group.get("id"), f"{context}.id")
         title = require_string(group, "title", context)
         summary = require_string(group, "summary", context)
+        step_id = f"{chapter_id}-review"
+        owner_key = f"{chapter_id}:{step_id}"
+        section = {
+            "id": step_id,
+            "title": title,
+            "goal": "",
+            "decision": "",
+            "result": "",
+            "explanation": summary,
+            "splitRationale": "",
+            "splitConfidence": None,
+            "dependsOn": [],
+            "oversizedReason": "",
+            "reviewMetrics": section_review_metrics(
+                references,
+                {repository.id: repository},
+            ),
+            "code": references,
+            "ownerKey": owner_key,
+            "implicit": True,
+        }
         chapters.append({
             "id": chapter_id,
             "title": title,
@@ -1013,13 +1276,14 @@ def legacy_chapters(
             "summary": summary,
             "points": [str(point) for point in group.get("points", [])],
             "steps": [{
-                "id": f"{chapter_id}-review",
+                "id": step_id,
                 "title": title,
                 "goal": "",
                 "decision": "",
                 "result": "",
                 "explanation": summary,
                 "code": references,
+                "sections": [section],
             }],
         })
     return chapters
@@ -1090,6 +1354,34 @@ def validate_diff_coverage(
                     )
 
 
+def validate_logical_unit_consistency(
+    chapters: list[dict[str, Any]],
+) -> None:
+    definitions: dict[
+        tuple[str, str],
+        tuple[int, int, str, str],
+    ] = {}
+    for chapter in chapters:
+        for step in chapter["steps"]:
+            for section in step["sections"]:
+                for reference in section["code"]:
+                    for value in reference.get("ranges") or []:
+                        key = (reference["fileKey"], value["unitId"])
+                        definition = (
+                            value["start"],
+                            value["end"],
+                            value["unitType"],
+                            value["symbol"],
+                        )
+                        previous = definitions.get(key)
+                        if previous is not None and previous != definition:
+                            raise ValueError(
+                                f"{reference['fileKey']} logical unit "
+                                f"{value['unitId']} must reuse the same boundary"
+                            )
+                        definitions[key] = definition
+
+
 def normalize_manifest(
     manifest: dict[str, Any],
     schema_version: int,
@@ -1122,6 +1414,7 @@ def normalize_manifest(
             ]
         if not isinstance(flow, list) or not flow:
             raise ValueError("manifest.flow must be a non-empty list")
+    validate_logical_unit_consistency(chapters)
     validate_diff_coverage(chapters, repositories)
     normalized_flow = []
     for index, node in enumerate(flow):

@@ -40,6 +40,61 @@ decision, state change, or external call.
   with at least three surrounding lines. Expand, shrink, or split any range
   whose boundary is not syntactically and logically complete.
 
+## Business-complete review sections
+
+Line count is a review-load signal, never a split boundary. A 350-line mapping
+can remain one unit, while 150 lines containing three independent business
+actions should be split. Use `step.sections` only when one technical-plan step
+contains at least two independently reviewable business closures. Keep
+`step.code` for a step that is already cohesive.
+
+Generate sections in two passes:
+
+1. Before grouping code, identify business logic units. For each unit, state
+   its precondition, primary decision or action, state change or external call,
+   result, applicable error path, code ranges, and dependencies. Do not segment
+   the Diff by file, technical layer, or line count.
+2. Group adjacent units in execution order. One section must have one primary
+   business purpose and a result that a reviewer can verify without reading the
+   next section. Keep calls with request construction and error handling;
+   transactions with commit or rollback; locks with unlocks; and each complete
+   control-flow structure.
+
+Treat roughly 200–300 changed lines as a soft prompt to reconsider cohesion:
+
+- Below 200 lines, still split when there are multiple business closures.
+- Between 200 and 300 lines, keep or split based on business cohesion and
+  dependency strength.
+- Above 300 lines, actively look for complete business boundaries. If none is
+  safe, keep the unit whole and write `oversized_reason`; never cut it merely
+  to satisfy a size target.
+
+Every explicit section must provide stable `id`, `goal`, `result`,
+`explanation`, `split_rationale`, `split_confidence`, `depends_on`, and code
+ranges with stable `unit_id`; explicit section references use
+`display_mode: guided` so unrelated Diff in the same file stays hidden.
+`decision` is optional for a straight state change or external call.
+`depends_on` may reference only earlier sections in the same step.
+
+After drafting all sections, perform a separate boundary-review pass without
+reusing the drafting rationale as proof. For each section check:
+
+- Business singularity: one primary purpose, not a bundle of unrelated work.
+- Logical closure: its input or precondition leads to a verifiable result.
+- Code integrity: no signature, branch, transaction, call/error pair, or other
+  logical unit is cut.
+- Dependency integrity: the next section is not needed to understand the
+  current result.
+- Execution order: dependencies point backward and the page follows runtime or
+  data-flow order.
+- Coverage ownership: all production Diff is covered and every logical unit
+  has exactly one first owner.
+
+The boundary-review pass may only accept the draft, merge adjacent sections,
+or split at another complete logical-unit boundary. When confidence is low,
+prefer merging and preserve context. Do not render until this pass and the
+renderer validation both succeed.
+
 ## First-use editor choice
 
 Before the first review, inspect the shared configuration:
@@ -79,6 +134,7 @@ When `easy-cr` is not installed yet, run `python3 "${SKILL_DIR}/../../scripts/in
    - Keep `flow` to 3–6 nodes and order chapters/steps by business execution.
    - One chapter may reference code from multiple repositories; generate one report, not one report per repository.
    - When one file or method supports multiple business steps, divide it only at complete logical-unit boundaries. The first chapter/step that uses a shared unit owns the entire unit; later steps render the entire unit as a gray peer-step change.
+   - When a step contains multiple independent business closures, use `step.sections` and complete the two-pass section generation and boundary review above. Never use sections only to meet a line-count target.
    - Write goal, decision, result, explanation, and code annotations while generating the manifest. They are static report content, not browser-time AI output.
    - Put IDL and non-import production changes in the business step they support.
    - Keep test-file diffs out of chapter guidance; they remain available in complete Diff.
@@ -134,6 +190,7 @@ The executable persistence, batch, regeneration, and failure contracts are defin
 The base HTML always supports:
 
 - Chapter overview, guided step-by-step review, and complete Diff.
+- Oversized business steps expand into navigable review sections, while cohesive steps remain a single page. Section progress shows changed-line load as context, not as a pass/fail target.
 - Pre-generated goal, decision, result, explanation, and code annotations.
 - Diff filtering, search and folding.
 - Dark/light themes.
@@ -148,6 +205,7 @@ The base HTML always supports:
 - When an Agent resolves a sent batch, it writes an AI reply on each resolved comment with the processing result.
 - A top-right `发送评论给 AI` action sends only unprocessed comments. It shows a green success check briefly after synchronous acceptance.
 - Regeneration preserves historical comments. Exact anchors are retained when possible; otherwise code comments move near matching code in the same file. Deleted files safely no-op.
+- Code comments and selected-code Q&A created in a review section retain its `sectionId`; older comments without it continue to resolve at step level.
 - Previously reviewed additions use light green, current feedback changes use deep green, and deletions use light red.
 - The report header explains all code colors: additions, feedback changes, deletions, peer-step changes, and comment locations.
 - A complete logical unit is highlighted as the current change in at most one business step. If multiple steps use it, the first step in business order owns the entire unit and every later step renders the entire unit as a gray peer-step change; the unit is never split into mixed current/peer colors and report generation continues normally.

@@ -117,6 +117,14 @@ button { color:inherit }
 .step-number { display:grid; place-items:center; width:31px; height:31px; border:1px solid var(--border); border-radius:50%; color:var(--text); font-weight:800 }
 .step-button b { display:block; margin-bottom:2px; color:inherit; font-size:13px }
 .step-button small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:10px }
+.step-group { margin-bottom:10px }
+.step-group > .step-button { margin-bottom:0 }
+.section-list { display:grid; gap:5px; margin:6px 0 0 47px }
+.section-button { position:relative; width:100%; padding:8px 10px; border:0; border-left:2px solid var(--border); background:transparent; color:var(--muted); text-align:left; cursor:pointer }
+.section-button:hover { color:var(--text); background:var(--surface-soft) }
+.section-button.active { border-left-color:var(--primary); color:var(--primary); background:var(--surface-soft) }
+.section-button b { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px }
+.section-button small { display:block; margin-top:2px; font-size:9px }
 .code-stage { min-width:0; padding:14px 16px 30px; overflow:auto }
 .guided-code-list { display:flex; flex-direction:column; gap:12px }
 .explanation-panel { padding:22px 20px 90px; border-left:1px solid var(--border); background:var(--surface) }
@@ -481,6 +489,7 @@ let commentWritePending = JSON.stringify(commentState.comments) !== JSON.stringi
 let activeView = 'overview';
 let activeChapterIndex = 0;
 let activeStepIndex = 0;
+let activeSectionIndex = 0;
 let returnView = 'overview';
 let filter = 'all';
 let activeComposer = null;
@@ -665,6 +674,18 @@ async function persistMutation() {
 
 function currentChapter() { return chapters[activeChapterIndex]; }
 function currentStep() { return currentChapter()?.steps[activeStepIndex]; }
+function currentSection() { return currentStep()?.sections?.[activeSectionIndex]; }
+function sectionIndexById(step, sectionId) {
+  if (!sectionId) return 0;
+  const index = (step?.sections || []).findIndex(section => section.id === sectionId);
+  return index >= 0 ? index : 0;
+}
+function sectionIndexForFile(step, fileKeyValue) {
+  const index = (step?.sections || []).findIndex(section => (
+    section.code.some(reference => reference.fileKey === fileKeyValue)
+  ));
+  return index >= 0 ? index : 0;
+}
 function repositoryFor(repoId) { return report.repositories[repoId]; }
 function fileKey(card) { return `${card.dataset.repoId}:${card.dataset.path}`; }
 function allCardsForKey(key) { return [...document.querySelectorAll(`.file-card[data-file-key="${CSS.escape(key)}"]`)]; }
@@ -847,6 +868,7 @@ function renderOverview() {
     button.addEventListener('click', () => {
       activeChapterIndex = index;
       activeStepIndex = 0;
+      activeSectionIndex = 0;
       returnView = 'overview';
       showView('guided');
     });
@@ -870,9 +892,15 @@ function changedLine(line) {
 
 function referencesForFile(fileKeyValue) {
   return chapters.flatMap(chapter => chapter.steps.flatMap(step => (
-    step.code
+    step.sections.flatMap(section => section.code
       .filter(reference => reference.fileKey === fileKeyValue)
-      .map(reference => ({chapterId:chapter.id, stepId:step.id, reference}))
+      .map(reference => ({
+        chapterId:chapter.id,
+        stepId:step.id,
+        sectionId:section.id,
+        ownerKey:section.ownerKey,
+        reference
+      })))
   )));
 }
 
@@ -908,8 +936,7 @@ function applyDisplayMode(card, reference) {
 }
 
 function applyGuidedDisplayMode(card, references) {
-  const chapter = currentChapter();
-  const step = currentStep();
+  const section = currentSection();
   const fileKeyValue = references[0]?.fileKey;
   const primary = references.find(reference => reference.displayMode !== 'diff-only') || references[0];
   card.dataset.displayMode = primary?.displayMode || '';
@@ -920,16 +947,20 @@ function applyGuidedDisplayMode(card, references) {
     return;
   }
   const allReferences = referencesForFile(fileKeyValue);
-  const currentStepKey = `${chapter.id}:${step.id}`;
+  const currentOwnerKey = section.ownerKey;
   const currentRanges = allReferences
-    .filter(item => item.chapterId === chapter.id && item.stepId === step.id)
+    .filter(item => item.ownerKey === currentOwnerKey)
     .flatMap(item => item.reference.ranges || []);
   lines.forEach(line => {
     const changed = changedLine(line);
+    const inCurrentSection = lineInRanges(line, currentRanges);
     const active = changed
-      ? line.dataset.stepOwner === currentStepKey
-      : lineInRanges(line, currentRanges);
-    const peer = changed && Boolean(line.dataset.stepOwner) && !active;
+      ? line.dataset.stepOwner === currentOwnerKey
+      : inCurrentSection;
+    const peer = changed
+      && inCurrentSection
+      && Boolean(line.dataset.stepOwner)
+      && !active;
     if (!active && !peer && !line.classList.contains('hunk')) line.classList.add('hidden');
     if (peer) line.classList.add('peer-step-change');
   });
@@ -940,24 +971,56 @@ function renderGuided() {
   if (!chapter) return showView('overview');
   activeStepIndex = Math.min(activeStepIndex, chapter.steps.length - 1);
   const step = currentStep();
+  activeSectionIndex = Math.min(activeSectionIndex, step.sections.length - 1);
+  const section = currentSection();
   document.getElementById('step-sidebar-title').textContent = chapter.title;
   const stepNav = document.getElementById('guided-steps');
   stepNav.replaceChildren();
   chapter.steps.forEach((item, index) => {
+    const group = document.createElement('div');
+    group.className = 'step-group';
     const button = document.createElement('button');
     button.className = `step-button${index === activeStepIndex ? ' active' : ''}${index < activeStepIndex ? ' done' : ''}`;
     const repos = [...new Set(item.code.map(reference => repositoryFor(reference.repoId)?.label || reference.repoId))];
     button.innerHTML = `<span class="step-number">${index + 1}</span><span><b></b><small></small></span>`;
     button.querySelector('b').textContent = item.title;
     button.querySelector('small').textContent = `来源：${repos.join('、')}`;
-    button.addEventListener('click', () => { activeStepIndex = index; renderGuided(); });
-    stepNav.appendChild(button);
+    button.addEventListener('click', () => {
+      activeStepIndex = index;
+      activeSectionIndex = 0;
+      renderGuided();
+    });
+    group.appendChild(button);
+    if (item.sections.length > 1) {
+      const sectionList = document.createElement('div');
+      sectionList.className = 'section-list';
+      item.sections.forEach((candidate, sectionIndex) => {
+        const sectionButton = document.createElement('button');
+        sectionButton.type = 'button';
+        sectionButton.className = `section-button${
+          index === activeStepIndex && sectionIndex === activeSectionIndex
+            ? ' active'
+            : ''
+        }`;
+        sectionButton.innerHTML = '<b></b><small></small>';
+        sectionButton.querySelector('b').textContent = `${index + 1}.${sectionIndex + 1} ${candidate.title}`;
+        sectionButton.querySelector('small').textContent = `${candidate.reviewMetrics.changedLines} 行 Diff · ${candidate.reviewMetrics.logicalUnits} 个逻辑单元`;
+        sectionButton.addEventListener('click', () => {
+          activeStepIndex = index;
+          activeSectionIndex = sectionIndex;
+          renderGuided();
+        });
+        sectionList.appendChild(sectionButton);
+      });
+      group.appendChild(sectionList);
+    }
+    stepNav.appendChild(group);
   });
 
   const codeHost = document.getElementById('guided-code');
   codeHost.replaceChildren();
   const referencesByFile = new Map();
-  step.code.forEach(reference => {
+  section.code.forEach(reference => {
     if (!referencesByFile.has(reference.fileKey)) referencesByFile.set(reference.fileKey, []);
     referencesByFile.get(reference.fileKey).push(reference);
   });
@@ -977,9 +1040,9 @@ function renderGuided() {
   const explanation = document.getElementById('guided-explanation');
   explanation.replaceChildren();
   [
-    ['目标', step.goal || chapter.goal],
-    ['关键判断', step.decision || step.explanation],
-    ['结果', step.result || chapter.summary]
+    ['目标', section.goal || step.goal || chapter.goal],
+    ['关键判断', section.decision || section.explanation],
+    ['结果', section.result || step.result || chapter.summary]
   ].forEach(([title, value]) => {
     const section = document.createElement('section');
     section.className = 'explanation-section';
@@ -990,7 +1053,21 @@ function renderGuided() {
     section.append(heading, body);
     explanation.appendChild(section);
   });
-  const annotations = step.code.map(reference => reference.annotation).filter(Boolean);
+  if (section.splitRationale) {
+    const boundary = document.createElement('section');
+    boundary.className = 'explanation-section';
+    boundary.innerHTML = '<h3>小节边界</h3><p></p>';
+    boundary.querySelector('p').textContent = section.splitRationale;
+    explanation.appendChild(boundary);
+  }
+  if (section.oversizedReason) {
+    const oversized = document.createElement('section');
+    oversized.className = 'explanation-section';
+    oversized.innerHTML = '<h3>保持完整原因</h3><p></p>';
+    oversized.querySelector('p').textContent = section.oversizedReason;
+    explanation.appendChild(oversized);
+  }
+  const annotations = section.code.map(reference => reference.annotation).filter(Boolean);
   if (annotations.length) {
     const annotation = document.createElement('section');
     annotation.className = 'code-annotation';
@@ -998,7 +1075,10 @@ function renderGuided() {
     annotation.querySelector('p').textContent = annotations.join('\n');
     explanation.appendChild(annotation);
   }
-  document.getElementById('guided-progress').textContent = `步骤 ${activeStepIndex + 1} / ${chapter.steps.length}：${step.title}`;
+  const sectionProgress = step.sections.length > 1
+    ? ` · 小节 ${activeSectionIndex + 1} / ${step.sections.length}：${section.title}`
+    : `：${step.title}`;
+  document.getElementById('guided-progress').textContent = `步骤 ${activeStepIndex + 1} / ${chapter.steps.length}${sectionProgress} · ${section.reviewMetrics.changedLines} 行 Diff`;
   const previous = document.getElementById('previous-step');
   previous.disabled = false;
   previous.textContent = previousStepTarget().label;
@@ -1074,12 +1154,23 @@ function renderFullNav() {
 }
 
 function previousStepTarget() {
+  if (activeSectionIndex > 0) {
+    return {
+      view:'guided',
+      chapterIndex:activeChapterIndex,
+      stepIndex:activeStepIndex,
+      sectionIndex:activeSectionIndex - 1,
+      label:`上一小节：${currentStep().sections[activeSectionIndex - 1].title}`
+    };
+  }
   if (activeStepIndex > 0) {
+    const previousStep = currentChapter().steps[activeStepIndex - 1];
     return {
       view:'guided',
       chapterIndex:activeChapterIndex,
       stepIndex:activeStepIndex - 1,
-      label:`上一步：${currentChapter().steps[activeStepIndex - 1].title}`
+      sectionIndex:previousStep.sections.length - 1,
+      label:`上一步：${previousStep.title}`
     };
   }
   if (activeChapterIndex > 0) {
@@ -1088,6 +1179,7 @@ function previousStepTarget() {
       view:'guided',
       chapterIndex:activeChapterIndex - 1,
       stepIndex:previousChapter.steps.length - 1,
+      sectionIndex:previousChapter.steps.at(-1).sections.length - 1,
       label:`上一章节：${previousChapter.title}`
     };
   }
@@ -1096,11 +1188,22 @@ function previousStepTarget() {
 
 function nextStepTarget() {
   const chapter = currentChapter();
+  const step = currentStep();
+  if (activeSectionIndex + 1 < step.sections.length) {
+    return {
+      view:'guided',
+      chapterIndex:activeChapterIndex,
+      stepIndex:activeStepIndex,
+      sectionIndex:activeSectionIndex + 1,
+      label:`下一小节：${step.sections[activeSectionIndex + 1].title}`
+    };
+  }
   if (activeStepIndex + 1 < chapter.steps.length) {
     return {
       view:'guided',
       chapterIndex:activeChapterIndex,
       stepIndex:activeStepIndex + 1,
+      sectionIndex:0,
       label:`下一步：${chapter.steps[activeStepIndex + 1].title}`
     };
   }
@@ -1109,6 +1212,7 @@ function nextStepTarget() {
       view:'guided',
       chapterIndex:activeChapterIndex + 1,
       stepIndex:0,
+      sectionIndex:0,
       label:`下一章节：${chapters[activeChapterIndex + 1].title}`
     };
   }
@@ -1125,6 +1229,7 @@ function applyStepTarget(target) {
   }
   activeChapterIndex = target.chapterIndex;
   activeStepIndex = target.stepIndex;
+  activeSectionIndex = target.sectionIndex || 0;
   renderGuided();
 }
 
@@ -1326,11 +1431,13 @@ function openTextComment(draft) {
   const endLine = draft.lines[draft.end];
   const chapter = currentChapter();
   const step = currentStep();
+  const section = currentSection();
   openCommentComposer({
     scope:'code',
     target:{
       chapterId:activeView === 'guided' ? chapter?.id : null,
       stepId:activeView === 'guided' ? step?.id : null,
+      sectionId:activeView === 'guided' ? section?.id : null,
       repoId:draft.card.dataset.repoId,
       path:draft.card.dataset.path,
       startAnchor:startLine.dataset.anchor,
@@ -1351,9 +1458,11 @@ function selectedCodeTarget(draft) {
   const endLine = draft.lines[draft.end];
   const chapter = currentChapter();
   const step = currentStep();
+  const section = currentSection();
   return {
     chapterId:activeView === 'guided' ? chapter?.id : null,
     stepId:activeView === 'guided' ? step?.id : null,
+    sectionId:activeView === 'guided' ? section?.id : null,
     repoId:draft.card.dataset.repoId,
     path:draft.card.dataset.path,
     startAnchor:startLine.dataset.anchor,
@@ -1370,6 +1479,7 @@ function selectedTaskTarget(draft) {
     targetType:'qa',
     chapterId:draft.box.dataset.chapterId || null,
     stepId:draft.box.dataset.stepId || null,
+    sectionId:draft.box.dataset.sectionId || null,
     repoId:draft.box.dataset.repoId,
     path:draft.box.dataset.path,
     locationKey:draft.box.dataset.codeQaLocation,
@@ -1467,6 +1577,10 @@ function focusTaskAnnotation(annotation) {
     activeChapterIndex = chapterIndex;
     const stepIndex = chapters[chapterIndex].steps.findIndex(step => step.id === target.stepId);
     activeStepIndex = stepIndex >= 0 ? stepIndex : 0;
+    activeSectionIndex = sectionIndexById(
+      chapters[chapterIndex].steps[activeStepIndex],
+      target.sectionId
+    );
     showView('guided');
   } else {
     showView('full');
@@ -1931,6 +2045,7 @@ function explainTextSelection(draft, restoredState=null) {
     view:activeView,
     chapterId:target.chapterId,
     stepId:target.stepId,
+    sectionId:target.sectionId,
     target,
     quote:draft.quote,
     history:[],
@@ -1941,6 +2056,7 @@ function explainTextSelection(draft, restoredState=null) {
   state.view = activeView;
   state.chapterId = target.chapterId;
   state.stepId = target.stepId;
+  state.sectionId = target.sectionId;
   state.target = target;
   state.quote = draft.quote;
   state.history = Array.isArray(state.history) ? state.history : [];
@@ -1951,6 +2067,7 @@ function explainTextSelection(draft, restoredState=null) {
   box.dataset.codeQaLocation = locationKey;
   box.dataset.chapterId = target.chapterId || '';
   box.dataset.stepId = target.stepId || '';
+  box.dataset.sectionId = target.sectionId || '';
   box.dataset.repoId = target.repoId || '';
   box.dataset.path = target.path || '';
   const thread = box.querySelector('.explain-thread');
@@ -2054,6 +2171,10 @@ function restoreCodeQa(locationKey=null) {
     activeChapterIndex = chapterIndex;
     const stepIndex = chapters[chapterIndex].steps.findIndex(item => item.id === state.stepId);
     activeStepIndex = stepIndex >= 0 ? stepIndex : 0;
+    activeSectionIndex = sectionIndexById(
+      chapters[chapterIndex].steps[activeStepIndex],
+      state.sectionId || state.target.sectionId
+    );
     returnView = 'overview';
     showView('guided');
   } else {
@@ -2103,6 +2224,7 @@ function openLineComment(line, card, extend) {
     target:{
       chapterId:activeView === 'guided' ? currentChapter()?.id : null,
       stepId:activeView === 'guided' ? currentStep()?.id : null,
+      sectionId:activeView === 'guided' ? currentSection()?.id : null,
       repoId:card.dataset.repoId,
       path:card.dataset.path,
       startAnchor:startLine.dataset.anchor,
@@ -2330,6 +2452,7 @@ function focusComment(comment) {
     if (index >= 0) {
       activeChapterIndex = index;
       activeStepIndex = 0;
+      activeSectionIndex = 0;
       showView('guided');
       requestAnimationFrame(() => focusCommentElement(
         document.getElementById(`chapter-comment-${comment.id}`)
@@ -2347,6 +2470,10 @@ function focusComment(comment) {
     activeStepIndex = explicitStep >= 0
       ? explicitStep
       : Math.max(0, chapters[chapterIndex].steps.findIndex(step => step.code.some(reference => reference.fileKey === `${comment.target.repoId}:${comment.target.path}`)));
+    const selectedStep = chapters[chapterIndex].steps[activeStepIndex];
+    activeSectionIndex = comment.target?.sectionId
+      ? sectionIndexById(selectedStep, comment.target.sectionId)
+      : sectionIndexForFile(selectedStep, `${comment.target.repoId}:${comment.target.path}`);
     showView('guided');
     requestAnimationFrame(() => focusCommentElement(
       guidedReview.querySelector(`#comment-${CSS.escape(comment.id)}`)
@@ -2803,6 +2930,7 @@ document.getElementById('mode-toggle').addEventListener('click', () => {
 homeButton.addEventListener('click', () => {
   activeChapterIndex = 0;
   activeStepIndex = 0;
+  activeSectionIndex = 0;
   returnView = 'overview';
   showView('overview');
   renderOverview();
