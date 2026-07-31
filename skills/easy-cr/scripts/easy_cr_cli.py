@@ -202,62 +202,54 @@ def atomic_write_text(path: Path, content: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def marketplace_source_path(repo_root: Path, home: Path) -> str:
-    repo_root = repo_root.resolve()
-    home = home.expanduser().resolve()
-    try:
-        relative = repo_root.relative_to(home)
-        return f"./{relative.as_posix()}"
-    except ValueError:
-        return str(repo_root)
-
-
-def upsert_codex_marketplace(
-    repo_root: Path,
-    marketplace_path: Path,
-    home: Path,
-) -> bool:
+def remove_personal_codex_plugin(marketplace_path: Path) -> bool:
+    """Remove the legacy Easy CR entry from Codex's personal marketplace."""
     try:
         payload = json.loads(marketplace_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        payload = {
-            "name": "personal",
-            "interface": {"displayName": "Personal"},
-            "plugins": [],
-        }
+        return False
     except (OSError, json.JSONDecodeError) as error:
         raise RuntimeError(f"读取 Codex marketplace 失败：{error}") from error
     if not isinstance(payload, dict):
         raise RuntimeError("Codex marketplace 顶层必须为 JSON 对象")
-    plugins = payload.setdefault("plugins", [])
+    plugins = payload.get("plugins", [])
     if not isinstance(plugins, list):
         raise RuntimeError("Codex marketplace plugins 必须为数组")
-
-    desired = {
-        "name": "easy-cr",
-        "source": {
-            "source": "local",
-            "path": marketplace_source_path(repo_root, home),
-        },
-        "policy": {
-            "installation": "AVAILABLE",
-            "authentication": "ON_INSTALL",
-        },
-        "category": "Productivity",
-    }
-    existing = next(
-        (item for item in plugins if isinstance(item, dict) and item.get("name") == "easy-cr"),
-        None,
-    )
-    if existing == desired:
+    filtered = [
+        item
+        for item in plugins
+        if not (isinstance(item, dict) and item.get("name") == "easy-cr")
+    ]
+    if len(filtered) == len(plugins):
         return False
-    if existing is None:
-        plugins.append(desired)
-    else:
-        existing.clear()
-        existing.update(desired)
+    payload["plugins"] = filtered
     atomic_write_json(marketplace_path, payload)
     return True
+
+
+def codex_marketplace_path(command: Path, name: str = "easy-cr") -> str | None:
+    result = run(
+        [str(command), "plugin", "marketplace", "list", "--json"],
+        allow_failure=True,
+    )
+    if result.returncode:
+        return None
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    items = payload if isinstance(payload, list) else payload.get("marketplaces", [])
+    for item in items:
+        if not isinstance(item, dict) or item.get("name") != name:
+            continue
+        source = item.get("marketplaceSource") or {}
+        return (
+            item.get("root")
+            or item.get("path")
+            or source.get("source")
+            or source.get("path")
+        )
+    return None
 
 
 def run(command: list[str], *, allow_failure: bool = False) -> subprocess.CompletedProcess[str]:
@@ -269,9 +261,27 @@ def run(command: list[str], *, allow_failure: bool = False) -> subprocess.Comple
 
 
 def configure_codex(command: Path, repo_root: Path, home: Path) -> None:
-    marketplace = home / ".agents" / "plugins" / "marketplace.json"
-    upsert_codex_marketplace(repo_root, marketplace, home)
-    run([str(command), "plugin", "add", "easy-cr@personal"])
+    repo_root = repo_root.resolve()
+    current = codex_marketplace_path(command)
+    if current and Path(current).expanduser().resolve() != repo_root:
+        run([str(command), "plugin", "marketplace", "remove", "easy-cr"])
+        current = None
+    if current is None:
+        run([
+            str(command),
+            "plugin",
+            "marketplace",
+            "add",
+            str(repo_root),
+        ])
+    run([str(command), "plugin", "add", "easy-cr@easy-cr"])
+    run(
+        [str(command), "plugin", "remove", "easy-cr@personal"],
+        allow_failure=True,
+    )
+    remove_personal_codex_plugin(
+        home / ".agents" / "plugins" / "marketplace.json"
+    )
 
 
 def claude_marketplace_path(command: Path) -> str | None:
@@ -438,7 +448,7 @@ def codex_installation_state(command: Path | None) -> dict[str, Any]:
         return {"installed": False, "error": None}
     result = run([str(command), "plugin", "list"], allow_failure=True)
     return {
-        "installed": result.returncode == 0 and "easy-cr@personal" in result.stdout,
+        "installed": result.returncode == 0 and "easy-cr@easy-cr" in result.stdout,
         "error": None if result.returncode == 0 else (
             result.stderr.strip() or result.stdout.strip() or "查询失败"
         ),
@@ -718,19 +728,15 @@ def collect_status(
                 "runtimeError": runtime["runtimeError"],
             }
 
-    codex_marketplace = home / ".agents" / "plugins" / "marketplace.json"
     codex_source_matches = False
-    try:
-        codex_payload = json.loads(codex_marketplace.read_text(encoding="utf-8"))
-        desired_path = marketplace_source_path(repo_root, home)
-        codex_source_matches = any(
-            item.get("name") == "easy-cr"
-            and item.get("source", {}).get("path") == desired_path
-            for item in codex_payload.get("plugins", [])
-            if isinstance(item, dict)
-        )
-    except (OSError, json.JSONDecodeError, AttributeError):
-        pass
+    codex_command = commands.get("codex")
+    if codex_command is not None:
+        configured_path = codex_marketplace_path(codex_command)
+        if configured_path:
+            codex_source_matches = (
+                Path(configured_path).expanduser().resolve()
+                == repo_root.resolve()
+            )
 
     cli_target = cli_link.resolve(strict=False) if cli_link.is_symlink() else None
     cli_installed = cli_link.is_symlink()
@@ -827,7 +833,7 @@ def build_doctor_checks(payload: dict[str, Any]) -> list[dict[str, str]]:
         add(
             "codex-marketplace",
             clients["codex"]["marketplaceSourceMatches"],
-            "personal marketplace 源码路径",
+            "Easy CR marketplace 源码路径",
         )
         add(
             "codex-plugin",

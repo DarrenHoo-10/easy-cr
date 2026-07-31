@@ -1,6 +1,6 @@
 # Easy CR manifest
 
-优先使用 schema v2。它用“技术方案章节 → 业务步骤 → 代码范围”组织评审，并允许一个章节连续讲解多个仓库。
+优先使用 schema v2。它用“技术方案章节 → 业务步骤 → 可选评审小节 → 代码范围”组织评审，并允许一个章节连续讲解多个仓库。
 
 ```json
 {
@@ -70,11 +70,48 @@
           "id": "submit-proposal",
           "title": "自动提交业务方案",
           "explanation": "先查询订单是否已提交；只有未提交时才发起自动提交。",
-          "code": [
+          "sections": [
             {
-              "repo_id": "proposal-service",
-              "path": "service/commission/submit.go",
-              "display_mode": "compact-context"
+              "id": "check-submission",
+              "title": "确认方案允许提交",
+              "goal": "识别仍处于待提交状态的方案。",
+              "decision": "已提交方案直接结束，只有未提交方案继续执行。",
+              "result": "得到允许提交的方案。",
+              "explanation": "把状态读取、判断和对应失败路径作为一个业务闭环。",
+              "split_rationale": "本节只回答方案是否允许提交，不产生外部提交副作用。",
+              "split_confidence": 0.91,
+              "depends_on": [],
+              "code": [{
+                "repo_id": "proposal-service",
+                "path": "service/commission/submit.go",
+                "display_mode": "guided",
+                "ranges": [{
+                  "unit_id": "check-submission",
+                  "unit_type": "function",
+                  "symbol": "CheckSubmission"
+                }]
+              }]
+            },
+            {
+              "id": "submit-approved-proposal",
+              "title": "提交满足条件的方案",
+              "goal": "完成方案提交并返回确定结果。",
+              "decision": "请求构造、远程调用和错误处理必须一起评审。",
+              "result": "方案提交成功，或返回完整的失败原因。",
+              "explanation": "本节包含一次完整外部调用及其错误处理。",
+              "split_rationale": "本节从可提交方案开始，以外部提交结果结束。",
+              "split_confidence": 0.93,
+              "depends_on": ["check-submission"],
+              "code": [{
+                "repo_id": "proposal-service",
+                "path": "service/commission/submit.go",
+                "display_mode": "guided",
+                "ranges": [{
+                  "unit_id": "submit-approved-proposal",
+                  "unit_type": "function",
+                  "symbol": "SubmitProposal"
+                }]
+              }]
             }
           ]
         }
@@ -86,7 +123,13 @@
 
 ## 字段规则
 
-- `repositories[].id`、`chapters[].id`、`steps[].id` 必须稳定且唯一。
+- `repositories[].id`、`chapters[].id`、`steps[].id` 和同一步骤内的 `sections[].id` 必须稳定且唯一。
+- 小步骤继续使用 `step.code`。只有同一步骤中确实存在两个以上可独立评审的业务闭环时才使用 `step.sections`；二者不得同时出现。旧的 `step.code` 会被归一化成一个兼容小节。
+- 显式 `sections` 至少包含两个小节。每个小节必须填写 `goal`、`result`、`explanation`、`split_rationale` 和 0–1 的 `split_confidence`；`depends_on` 只能引用同一步骤中排在前面的 `section.id`。
+- 显式小节的每个代码引用必须使用 `display_mode: guided` 并提供 `ranges`，每个 range 必须提供稳定 `unit_id`。这样页面只展示本小节逻辑单元，小节之间也能保持代码所有权和评论定位稳定。
+- 每个小节必须首次拥有至少一个新的逻辑单元；如果一个小节只重复展示前面小节已经拥有的上下文，应合并而不是创建空壳评审页。同一 `file + unit_id` 在多个位置复用时必须保持完全相同的边界。
+- Easy CR 会计算每个小节实际包含的新增、删除行数。200–300 行只是提醒模型重新判断业务内聚性的软区间，不是切分规则；发现多个业务闭环时少于 200 行也应拆分，逻辑单一时位于该区间也可以保持完整。
+- 一个业务完整小节超过 300 行时可以保留，但必须填写 `oversized_reason`，解释为什么事务、错误路径或其他强耦合关系使它不能安全继续拆分。不得为了满足行数切断业务闭环。
 - `root` 必须是绝对 Git 仓库路径；每个仓库独立指定 `base` 和 `head`。
 - `head` 可以使用 revision，也可以使用 `WORKTREE`；后者只包含已跟踪的工作区改动。
 - `code[].repo_id + path` 必须指向对应仓库在本次 Diff 中发生变化的文件。
@@ -106,6 +149,14 @@
 - 未显式指定展示模式时，依赖清单、锁文件、生成物和 import-only 改动自动使用 `diff-only`，其他文件使用 `compact-context`。
 - `goal`、`decision`、`result`、`explanation` 和 `annotation` 都在生成报告时预先写入；HTML 内没有运行时 AI 请求。
 - 除测试文件、依赖文件和纯 import-only 改动外，每一行生产代码 Diff 都必须被业务章节引用；文件未归类或 `ranges` 遗漏业务改动时，生成器会直接报错。
+
+## 大步骤拆分质量
+
+生成报告时先识别业务逻辑单元，再决定是否组合成小节，不直接按 Diff 行数分段。一个逻辑单元至少要说明前置条件、关键判断或动作、状态或外部副作用、结果和错误路径中的适用部分。
+
+小节边界应优先放在完整业务结果之后，例如完成一次判断、一次状态变化或一次外部调用及其错误处理。调用与错误处理、事务与回滚、加锁与解锁、请求构造与发送，以及同一控制流结构必须留在同一小节。
+
+完成初次拆分后应使用独立检查过程审阅全部小节，只允许接受、合并相邻小节或在完整逻辑单元边界继续拆分。检查业务单一性、逻辑闭环、代码完整性、依赖完整性、执行顺序和 Diff 覆盖唯一性。低置信度时优先合并；错误合并只增加阅读量，错误拆分会丢失必要上下文。
 
 ## 内容组织规则
 
