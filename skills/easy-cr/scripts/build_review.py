@@ -109,6 +109,11 @@ class RepositoryReview:
     subject: str
     author: str
     authored_at: str
+    source_cache: dict[str, str] = field(default_factory=dict, repr=False)
+    go_unit_cache: dict[str, dict[str, tuple[int, int]]] = field(
+        default_factory=dict,
+        repr=False,
+    )
 
     @property
     def files_by_path(self) -> dict[str, DiffFile]:
@@ -409,15 +414,18 @@ def render_file_card(
     repo_id: str,
     repo_label: str,
     step_references: list[tuple[str, dict[str, Any]]] | None = None,
+    *,
+    highlight_identifiers: bool = True,
 ) -> str:
     rendered_lines: list[str] = []
     block_comment = False
     is_go = item.path.endswith(".go")
     step_references = step_references or []
+    compiled_assignments = compile_step_assignments(step_references)
     for line in item.lines:
         if line.kind == "hunk":
             block_comment = False
-        if is_go and line.kind in {"add", "ctx"}:
+        if highlight_identifiers and is_go and line.kind in {"add", "ctx"}:
             body, block_comment = highlight_go_line(line.text, block_comment)
         else:
             body = html.escape(line.text)
@@ -427,7 +435,11 @@ def render_file_card(
         classes = f"line {line.kind}"
         if line.iteration_change:
             classes += " iteration-change"
-        owner, logical_unit = first_step_assignment(step_references, line)
+        owner, logical_unit = first_step_assignment(
+            step_references,
+            line,
+            compiled=compiled_assignments,
+        )
         owner_attribute = (
             f' data-step-owner="{html.escape(owner, quote=True)}"'
             if owner
@@ -487,12 +499,27 @@ def first_step_owner(
 def first_step_assignment(
     step_references: list[tuple[str, dict[str, Any]]],
     line: DiffLine,
+    *,
+    compiled: list[tuple[str, str, list[tuple[int, int]] | None]] | None = None,
 ) -> tuple[str, str]:
     if line.kind not in {"add", "del"}:
         return "", ""
     number = line.new_line if line.new_line is not None else line.old_line
     if number is None:
         return "", ""
+    assignments = compiled if compiled is not None else compile_step_assignments(
+        step_references
+    )
+    for owner, unit_id, ranges in assignments:
+        if ranges is None or any(start <= number <= end for start, end in ranges):
+            return owner, unit_id
+    return "", ""
+
+
+def compile_step_assignments(
+    step_references: list[tuple[str, dict[str, Any]]],
+) -> list[tuple[str, str, list[tuple[int, int]] | None]]:
+    """Compile stable first-owner ranges once per rendered file."""
     unit_order: list[str] = []
     unit_owners: dict[str, str] = {}
     unit_ranges: dict[str, list[tuple[int, int]] | None] = {}
@@ -517,11 +544,10 @@ def first_step_assignment(
                 unit_ranges[unit_id] = []
             if unit_ranges[unit_id] is not None:
                 unit_ranges[unit_id].append((value["start"], value["end"]))
-    for unit_id in unit_order:
-        ranges = unit_ranges[unit_id]
-        if ranges is None or any(start <= number <= end for start, end in ranges):
-            return unit_owners[unit_id], unit_id
-    return "", ""
+    return [
+        (unit_owners[unit_id], unit_id, unit_ranges[unit_id])
+        for unit_id in unit_order
+    ]
 
 
 def resolve_diff(
@@ -725,16 +751,21 @@ def default_display_mode(item: DiffFile) -> str:
 
 
 def reviewed_source(repository: RepositoryReview, path: str) -> str:
+    if path in repository.source_cache:
+        return repository.source_cache[path]
     if repository.head == "WORKTREE":
         target = repository.root / path
-        return target.read_text(encoding="utf-8") if target.is_file() else ""
-    result = run_git(
-        repository.root,
-        "show",
-        f"{repository.revision['headCommit']}:{path}",
-        check=False,
-    )
-    return result.stdout if result.returncode == 0 else ""
+        source = target.read_text(encoding="utf-8") if target.is_file() else ""
+    else:
+        result = run_git(
+            repository.root,
+            "show",
+            f"{repository.revision['headCommit']}:{path}",
+            check=False,
+        )
+        source = result.stdout if result.returncode == 0 else ""
+    repository.source_cache[path] = source
+    return source
 
 
 def go_function_units(source: str) -> dict[str, tuple[int, int]]:
@@ -818,7 +849,11 @@ def resolve_function_unit(
 ) -> tuple[int, int] | None:
     if not path.endswith(".go"):
         return None
-    return go_function_units(reviewed_source(repository, path)).get(symbol)
+    if path not in repository.go_unit_cache:
+        repository.go_unit_cache[path] = go_function_units(
+            reviewed_source(repository, path)
+        )
+    return repository.go_unit_cache[path].get(symbol)
 
 
 def normalize_code_reference(
@@ -1748,6 +1783,9 @@ def main(argv: list[str] | None = None) -> int:
             repository.id,
             repository.label,
             step_references.get(f"{repository.id}:{item.path}", []),
+            highlight_identifiers=bool(
+                semantic.get("endpoint") and semantic.get("token")
+            ),
         )
         for index, (repository, item) in enumerate(files)
     )

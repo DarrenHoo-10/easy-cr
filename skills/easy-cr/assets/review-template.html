@@ -151,6 +151,35 @@ button { color:inherit }
 .guided-progress { text-align:center; font-weight:700 }
 .guided-footer .next { justify-self:center; min-width:260px }
 
+/* Chapter drawer */
+.chapter-handle { position:fixed; z-index:39; top:54%; left:0; width:16px; height:34px; display:grid; place-items:center; padding:0; border:1px solid color-mix(in srgb,var(--primary) 16%,var(--border)); border-left:0; border-radius:0 6px 6px 0; outline:0; background:color-mix(in srgb,var(--surface) 92%,var(--primary) 8%); color:color-mix(in srgb,var(--primary) 68%,var(--muted)); box-shadow:0 2px 9px rgba(31,43,61,.09); backdrop-filter:blur(8px); cursor:pointer; transform:translateY(-50%); transition:left .2s ease,background .15s,color .15s,border-color .15s,border-radius .2s ease,box-shadow .15s }
+.chapter-handle:hover { border-color:color-mix(in srgb,var(--primary) 32%,var(--border)); background:var(--surface); color:var(--primary); box-shadow:0 4px 13px rgba(31,43,61,.13) }
+.chapter-handle:focus-visible { box-shadow:0 0 0 2px var(--primary-soft),0 4px 13px rgba(31,43,61,.13) }
+.chapter-handle[aria-expanded="true"] { left:324px; border-right:0; border-left:1px solid var(--border); border-radius:6px 0 0 6px; background:var(--surface); color:var(--primary); box-shadow:-3px 3px 12px rgba(31,43,61,.10) }
+.chapter-handle svg { width:7px; height:13px; fill:none; stroke:currentColor; stroke-width:1.4; stroke-linecap:round; stroke-linejoin:round }
+.chapter-handle .cue-close { display:none }
+.chapter-handle[aria-expanded="true"] .cue-open { display:none }
+.chapter-handle[aria-expanded="true"] .cue-close { display:block }
+.chapter-drawer-scrim { position:fixed; z-index:36; inset:72px 0; opacity:0; background:rgba(24,30,38,.18); backdrop-filter:blur(1px); pointer-events:none; transition:opacity .2s ease }
+.chapter-drawer-scrim.visible { opacity:1; pointer-events:auto }
+.chapter-drawer { position:fixed; z-index:37; top:72px; bottom:72px; left:0; width:340px; overflow:auto; border-right:1px solid var(--border); background:var(--surface); box-shadow:18px 0 40px rgba(31,43,61,.12); transform:translateX(-100%); visibility:hidden; transition:transform .2s ease,visibility 0s linear .2s }
+.chapter-drawer.visible { transform:translateX(0); visibility:visible; transition:transform .2s ease }
+.chapter-drawer-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:17px 16px 14px; border-bottom:1px solid var(--border) }
+.chapter-drawer-head h2 { margin:0 0 2px; font-size:15px }
+.chapter-drawer-head p { margin:0; color:var(--muted); font-size:10px }
+.chapter-drawer-key { flex:none; min-width:30px; padding:2px 6px; border:1px solid var(--border); border-radius:5px; color:var(--muted); background:var(--surface-soft); font:9px/16px ui-monospace,SFMono-Regular,Menlo,monospace; text-align:center }
+.chapter-drawer-nav { display:grid; gap:4px; padding:10px 8px }
+.chapter-drawer-option { width:100%; display:grid; grid-template-columns:34px minmax(0,1fr) auto; gap:10px; align-items:center; padding:10px 9px; border:0; border-left:3px solid transparent; border-radius:8px; background:transparent; color:var(--text); text-align:left; cursor:pointer }
+.chapter-drawer-option:hover { background:var(--surface-soft) }
+.chapter-drawer-option:focus-visible { outline:0; box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--primary) 42%,transparent) }
+.chapter-drawer-option.active { border-left-color:var(--primary); background:var(--primary-soft); color:var(--primary) }
+.chapter-drawer-option .chapter-number { width:28px; height:28px; font-size:12px }
+.chapter-drawer-option.active .chapter-number { color:#fff; border-color:var(--primary); background:var(--primary) }
+.chapter-drawer-option b { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px }
+.chapter-drawer-option small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:10px }
+.chapter-drawer-status { padding:2px 6px; border-radius:10px; color:var(--muted); background:var(--surface-soft); font-size:9px }
+.chapter-drawer-option.active .chapter-drawer-status { color:var(--primary); background:var(--surface) }
+
 /* Diff */
 .file-card { min-width:0; border:1px solid var(--border); border-radius:10px; background:var(--surface); overflow:hidden; scroll-margin-top:90px }
 .file-card summary { display:flex; align-items:center; gap:9px; min-height:42px; padding:9px 12px; border-bottom:1px solid transparent; background:var(--surface-soft); cursor:pointer }
@@ -312,6 +341,7 @@ button { color:inherit }
   .topbar { position:relative; flex-wrap:wrap; padding:10px 14px }
   .report-heading { order:3; flex-basis:100% }
   .report-subline,.diff-legend { flex-wrap:wrap; white-space:normal }
+  .report-meta { max-width:100%; white-space:normal; overflow-wrap:anywhere }
   .top-actions { margin-left:auto }
   .overview-shell,.full-diff-shell,.guided-shell { display:block }
   .chapter-sidebar,.full-sidebar,.step-sidebar { position:relative; top:0; width:100%; height:auto; border-right:0; border-bottom:1px solid var(--border) }
@@ -324,6 +354,9 @@ button { color:inherit }
   .save-state { position:static; margin:10px 14px }
   .inline-comment,.comment-composer.inline-comment-composer,.explain-box { min-width:0; margin-left:12px }
   .task-composer { width:calc(100vw - 24px) }
+  .chapter-drawer { top:0; bottom:0; width:min(340px,calc(100vw - 36px)) }
+  .chapter-drawer-scrim { inset:0 }
+  .chapter-handle[aria-expanded="true"] { left:calc(min(340px,calc(100vw - 36px)) - 16px) }
 }
 @media(prefers-reduced-motion:reduce) {
   html { scroll-behavior:auto }
@@ -360,6 +393,18 @@ button { color:inherit }
     <button class="action primary" id="complete-review" type="button">发送评论给 AI</button>
   </div>
 </header>
+
+<div id="chapter-drawer-scrim" class="chapter-drawer-scrim" aria-hidden="true"></div>
+<aside id="chapter-drawer" class="chapter-drawer" aria-hidden="true" aria-labelledby="chapter-drawer-title">
+  <div class="chapter-drawer-head">
+    <div><h2 id="chapter-drawer-title">选择章节</h2><p>直接跳转，不需要返回报告首页</p></div>
+    <span class="chapter-drawer-key">ESC</span>
+  </div>
+  <nav id="chapter-drawer-nav" class="chapter-drawer-nav"></nav>
+</aside>
+<button id="chapter-handle" class="chapter-handle hidden" type="button" aria-expanded="false" aria-controls="chapter-drawer" aria-label="展开章节选择" title="展开章节选择">
+  <svg viewBox="0 0 8 13" aria-hidden="true"><path class="cue-open" d="M2 2.5 5.5 6.5 2 10.5"/><path class="cue-close" d="M6 2.5 2.5 6.5 6 10.5"/></svg>
+</button>
 
 <section id="chapter-overview" class="view overview-shell">
   <aside class="chapter-sidebar">
@@ -506,6 +551,8 @@ let completeReviewResetTimer = null;
 let commentRefreshPending = false;
 let taskDraft = readTaskDraft();
 let taskEditing = null;
+let fullDiffInitialized = false;
+let chapterDrawerOpen = false;
 const semanticReferenceCache = new Map();
 const chapterOverview = document.getElementById('chapter-overview');
 const guidedReview = document.getElementById('guided-review');
@@ -524,6 +571,10 @@ const referenceContent = document.getElementById('reference-content');
 const saveState = document.getElementById('save-state');
 const saveStateText = document.getElementById('save-state-text');
 const completeReviewButton = document.getElementById('complete-review');
+const chapterHandle = document.getElementById('chapter-handle');
+const chapterDrawer = document.getElementById('chapter-drawer');
+const chapterDrawerScrim = document.getElementById('chapter-drawer-scrim');
+const chapterDrawerNav = document.getElementById('chapter-drawer-nav');
 
 function normalizeComment(comment) {
   const normalized = {...comment};
@@ -783,13 +834,65 @@ function addGutters(root=document) {
 
 function showView(name) {
   clearTextMatches();
+  if (name === 'full') ensureFullDiffInitialized();
+  if (name !== 'guided') setChapterDrawerOpen(false);
   activeView = name;
   chapterOverview.classList.toggle('hidden', name !== 'overview');
   guidedReview.classList.toggle('hidden', name !== 'guided');
   fullDiffView.classList.toggle('hidden', name !== 'full');
+  chapterHandle.classList.toggle('hidden', name !== 'guided');
   document.getElementById('mode-toggle').textContent = name === 'full' ? '返回技术方案' : '完整 Diff';
   if (name === 'guided') renderGuided();
   requestAnimationFrame(renderTaskAnnotations);
+}
+
+function setChapterDrawerOpen(open, {restoreFocus=false}={}) {
+  const next = Boolean(open && activeView === 'guided');
+  chapterDrawerOpen = next;
+  const label = next ? '收起章节选择' : '展开章节选择';
+  chapterHandle.setAttribute('aria-expanded', String(next));
+  chapterHandle.setAttribute('aria-label', label);
+  chapterHandle.title = label;
+  chapterDrawer.classList.toggle('visible', next);
+  chapterDrawer.setAttribute('aria-hidden', String(!next));
+  chapterDrawerScrim.classList.toggle('visible', next);
+  chapterDrawerScrim.setAttribute('aria-hidden', String(!next));
+  if (next) {
+    requestAnimationFrame(() => chapterDrawerNav.querySelector('.active')?.focus());
+  } else if (restoreFocus && !chapterHandle.classList.contains('hidden')) {
+    chapterHandle.focus();
+  }
+}
+
+function renderChapterDrawer() {
+  chapterDrawerNav.replaceChildren();
+  chapters.forEach((chapter, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `chapter-drawer-option${index === activeChapterIndex ? ' active' : ''}`;
+    if (index === activeChapterIndex) button.setAttribute('aria-current', 'page');
+    button.innerHTML = '<span class="chapter-number"></span><span><b></b><small></small></span><span class="chapter-drawer-status"></span>';
+    button.querySelector('.chapter-number').textContent = index + 1;
+    button.querySelector('b').textContent = chapter.title;
+    button.querySelector('small').textContent = `${chapter.steps.length} 个步骤`;
+    button.querySelector('.chapter-drawer-status').textContent = index === activeChapterIndex ? '当前' : '前往';
+    button.addEventListener('click', () => {
+      activeChapterIndex = index;
+      activeStepIndex = 0;
+      activeSectionIndex = 0;
+      setChapterDrawerOpen(false, {restoreFocus:true});
+      renderGuided();
+      window.scrollTo({top:0, behavior:'smooth'});
+    });
+    chapterDrawerNav.appendChild(button);
+  });
+}
+
+function ensureFullDiffInitialized() {
+  if (fullDiffInitialized) return;
+  addGutters(fullDiffs);
+  renderFullDiffGroups();
+  fullDiffInitialized = true;
 }
 
 function chapterRepositoryIds(chapter) {
@@ -974,12 +1077,14 @@ function renderGuided() {
   activeSectionIndex = Math.min(activeSectionIndex, step.sections.length - 1);
   const section = currentSection();
   document.getElementById('step-sidebar-title').textContent = chapter.title;
+  renderChapterDrawer();
   const stepNav = document.getElementById('guided-steps');
   stepNav.replaceChildren();
   chapter.steps.forEach((item, index) => {
     const group = document.createElement('div');
     group.className = 'step-group';
     const button = document.createElement('button');
+    button.type = 'button';
     button.className = `step-button${index === activeStepIndex ? ' active' : ''}${index < activeStepIndex ? ' done' : ''}`;
     const repos = [...new Set(item.code.map(reference => repositoryFor(reference.repoId)?.label || reference.repoId))];
     button.innerHTML = `<span class="step-number">${index + 1}</span><span><b></b><small></small></span>`;
@@ -1084,8 +1189,7 @@ function renderGuided() {
   previous.textContent = previousStepTarget().label;
   const next = document.getElementById('next-step');
   next.textContent = nextStepTarget().label;
-  renderChapterComments();
-  renderComments();
+  renderComments({updateOverview:false});
 }
 
 function renderFullDiffGroups() {
@@ -2299,9 +2403,15 @@ function findLinesForComment(comment, card) {
 }
 
 function renderInlineComments() {
+  const codeComments = comments.filter(comment => comment.scope === 'code');
+  if (
+    !codeComments.length
+    && !document.querySelector('.inline-comment')
+    && !document.querySelector('.line.comment-target')
+  ) return;
   document.querySelectorAll('.inline-comment').forEach(item => item.remove());
   document.querySelectorAll('.line.comment-target').forEach(line => line.classList.remove('comment-target'));
-  comments.filter(comment => comment.scope === 'code').forEach(comment => {
+  codeComments.forEach(comment => {
     allCardsForKey(`${comment.target.repoId}:${comment.target.path}`).forEach(card => {
       const found = findLinesForComment(comment, card);
       if (!found) return;
@@ -2383,8 +2493,13 @@ function renderInlineComments() {
 
 function renderHighlights() {
   if (!window.CSS?.highlights || typeof Highlight === 'undefined') return;
+  const codeComments = comments.filter(comment => comment.scope === 'code');
+  if (!codeComments.length) {
+    CSS.highlights.delete('review-comments');
+    return;
+  }
   const ranges = [];
-  comments.filter(comment => comment.scope === 'code').forEach(comment => {
+  codeComments.forEach(comment => {
     const card = allCardsForKey(`${comment.target.repoId}:${comment.target.path}`)[0];
     if (!card) return;
     const found = findLinesForComment(comment, card);
@@ -2514,13 +2629,13 @@ function renderChapterComments() {
   });
 }
 
-function renderComments() {
+function renderComments({updateOverview=true}={}) {
   updateCommentCounts();
   renderInlineComments();
   renderHighlights();
   renderAllComments();
   if (activeView === 'guided') renderChapterComments();
-  renderOverview();
+  if (updateOverview) renderOverview();
 }
 
 function openCommentsPopover(anchor=commentCountButton, filter=null) {
@@ -2927,6 +3042,12 @@ document.getElementById('mode-toggle').addEventListener('click', () => {
   returnView = activeView;
   showView('full');
 });
+chapterHandle.addEventListener('click', () => {
+  setChapterDrawerOpen(!chapterDrawerOpen);
+});
+chapterDrawerScrim.addEventListener('click', () => {
+  setChapterDrawerOpen(false, {restoreFocus:true});
+});
 homeButton.addEventListener('click', () => {
   activeChapterIndex = 0;
   activeStepIndex = 0;
@@ -2995,6 +3116,7 @@ function refreshFullDiff() {
 
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
+    setChapterDrawerOpen(false, {restoreFocus:chapterDrawerOpen});
     hideSelectionMenu();
     closeCommentsPopover();
     closeReferencePopover();
@@ -3015,9 +3137,6 @@ function initialize() {
   document.documentElement.dataset.theme = theme;
   updateThemeIcons();
   if (semanticEnabled) document.body.classList.add('semantic-enabled');
-  addGutters(fullDiffs);
-  renderFullDiffGroups();
-  renderOverview();
   renderComments();
   renderTaskAnnotations();
   restoreCodeQa();

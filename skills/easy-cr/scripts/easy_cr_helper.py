@@ -83,7 +83,9 @@ def _atomic_write(path: Path, content: bytes, mode: int = 0o600) -> None:
         prefix=f".{path.name}.",
         dir=path.parent,
     )
-    temporary = Path(temporary_name)
+    # Preserve the concrete path flavor supplied by the caller. This also keeps
+    # atomic writes testable when the Windows branch is simulated on POSIX.
+    temporary = path.parent / os.path.basename(temporary_name)
     try:
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(content)

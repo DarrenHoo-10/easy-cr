@@ -264,6 +264,10 @@ class ConfigurationTest(unittest.TestCase):
                 "resolve_editor_command",
                 return_value=code,
             ), mock.patch.object(
+                easy_cr_config.sys,
+                "platform",
+                "win32",
+            ), mock.patch.object(
                 easy_cr_config.subprocess,
                 "run",
                 return_value=completed,
@@ -974,6 +978,56 @@ class TemplateContractTest(unittest.TestCase):
         self.assertIn("返回章节首页", template)
         self.assertNotIn("next.textContent = '完成本次 CR'", template)
 
+    def test_guided_chapter_drawer_can_jump_directly_between_chapters(self):
+        template = TEMPLATE_PATH.read_text()
+
+        self.assertIn('id="chapter-handle"', template)
+        self.assertIn('id="chapter-drawer"', template)
+        self.assertIn("function renderChapterDrawer()", template)
+        self.assertIn("function setChapterDrawerOpen(open", template)
+        self.assertIn("activeChapterIndex = index", template)
+        self.assertIn(
+            '.chapter-handle[aria-expanded="true"] { left:324px;',
+            template,
+        )
+        self.assertNotIn("function renderGuidedNavigation()", template)
+        self.assertNotIn("guided-chapter-button", template)
+
+    def test_full_diff_setup_is_deferred_until_the_view_is_opened(self):
+        template = TEMPLATE_PATH.read_text()
+        initialize = template.split("function initialize()", 1)[1].split(
+            "initialize();", 1
+        )[0]
+
+        self.assertIn("function ensureFullDiffInitialized()", template)
+        self.assertIn("if (name === 'full') ensureFullDiffInitialized()", template)
+        self.assertNotIn("addGutters(fullDiffs)", initialize)
+        self.assertNotIn("renderFullDiffGroups()", initialize)
+
+    def test_mobile_report_metadata_does_not_expand_the_page_width(self):
+        template = TEMPLATE_PATH.read_text()
+
+        self.assertIn(
+            ".report-meta { max-width:100%; white-space:normal; overflow-wrap:anywhere }",
+            template,
+        )
+
+    def test_base_report_can_skip_semantic_identifier_markup(self):
+        rendered = build_review.render_file_card(
+            build_review.DiffFile(
+                "service.go",
+                lines=[build_review.DiffLine("+func Run() {}", "add", new_line=1)],
+                added=1,
+            ),
+            0,
+            "repo",
+            "repo",
+            highlight_identifiers=False,
+        )
+
+        self.assertNotIn('class="code-identifier"', rendered)
+        self.assertIn("+func Run() {}", rendered)
+
 
 class CliTest(unittest.TestCase):
     def test_non_interactive_init_requires_editor(self):
@@ -1539,6 +1593,45 @@ class BuildReviewTest(unittest.TestCase):
 
         self.assertEqual(units["Run"], (3, 11))
         self.assertEqual(units["Service.Run"], (3, 11))
+
+    def test_go_function_resolution_reuses_source_and_unit_cache(self):
+        repository = build_review.RepositoryReview(
+            id="repo",
+            label="repo",
+            root=Path("/repo"),
+            base="HEAD^",
+            head="HEAD",
+            context=10,
+            revision={
+                "headCommit": "a" * 40,
+                "reviewType": "revision",
+                "fingerprint": "a" * 40,
+            },
+            files=[build_review.DiffFile("service.go")],
+            subject="test",
+            author="test",
+            authored_at="test",
+        )
+        result = mock.Mock(
+            returncode=0,
+            stdout=(
+                "package sample\n\n"
+                "func Run() int { return Helper() }\n\n"
+                "func Helper() int { return 1 }\n"
+            ),
+        )
+
+        with mock.patch.object(build_review, "run_git", return_value=result) as run:
+            self.assertEqual(
+                build_review.resolve_function_unit(repository, "service.go", "Run"),
+                (3, 3),
+            )
+            self.assertEqual(
+                build_review.resolve_function_unit(repository, "service.go", "Helper"),
+                (5, 5),
+            )
+
+        run.assert_called_once()
 
     def git(self, repo: Path, *args: str) -> str:
         result = subprocess.run(
