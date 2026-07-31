@@ -36,7 +36,9 @@ from easy_cr_config import (
 )
 from setup_jetbrains_plugin import (
     JETBRAINS_EDITORS,
+    find_jetbrains_app,
     jetbrains_editor,
+    jetbrains_support_root,
     newest_plugins_dir,
 )
 from setup_vscode_extension import (
@@ -56,9 +58,10 @@ from review_comments import (
     mark_batch_resolved,
     replace_comments_block,
 )
+from platform_support import default_cli_destination, private_permissions_ok
 
 
-VERSION = "1.4.3"
+VERSION = "1.5.0"
 SKILL_DIR = SCRIPT_DIR.parent
 REPO_ROOT = SKILL_DIR.parents[1]
 SETUP_JETBRAINS_SCRIPT = SCRIPT_DIR / "setup_jetbrains_plugin.py"
@@ -202,7 +205,7 @@ def atomic_write_text(path: Path, content: str) -> None:
 def remove_personal_codex_plugin(marketplace_path: Path) -> bool:
     """Remove the legacy Easy CR entry from Codex's personal marketplace."""
     try:
-        payload = json.loads(marketplace_path.read_text())
+        payload = json.loads(marketplace_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return False
     except (OSError, json.JSONDecodeError) as error:
@@ -397,10 +400,11 @@ def choose_editor() -> str:
 
 def installed_jetbrains_plugin(editor: str) -> Path | None:
     descriptor = jetbrains_editor(editor)
-    preferred = newest_plugins_dir(descriptor, descriptor.default_app) / "easy-cr"
+    app = find_jetbrains_app(descriptor) or descriptor.default_app
+    preferred = newest_plugins_dir(descriptor, app) / "easy-cr"
     if preferred.is_dir():
         return preferred
-    support_root = Path.home() / "Library" / "Application Support" / "JetBrains"
+    support_root = jetbrains_support_root()
     candidates = sorted(
         support_root.glob(f"{descriptor.app_support_pattern}/plugins/easy-cr"),
         reverse=True,
@@ -587,9 +591,7 @@ def editor_runtime_status(
     token_exists = bool(resolved_token and resolved_token.expanduser().is_file())
     token_permission_ok = False
     if token_exists and resolved_token is not None:
-        token_permission_ok = (
-            stat.S_IMODE(resolved_token.expanduser().stat().st_mode) == 0o600
-        )
+        token_permission_ok = private_permissions_ok(resolved_token.expanduser())
 
     if editor in JETBRAINS_EDITOR_IDS:
         jb = jetbrains_editor(editor)
@@ -603,7 +605,7 @@ def editor_runtime_status(
             "id": editor,
             "displayName": descriptor.display_name,
             "endpoint": descriptor.endpoint,
-            "appInstalled": jb.default_app.is_dir(),
+            "appInstalled": find_jetbrains_app(jb) is not None,
             "extensionInstalled": plugin_path is not None,
             "extensionPath": str(plugin_path) if plugin_path else None,
             "runtimeReady": runtime_ready,
@@ -681,7 +683,7 @@ def collect_status(
     client_commands: dict[str, Path | None] | None = None,
 ) -> dict[str, Any]:
     commands = client_commands or detect_client_commands()
-    cli_link = home / ".local" / "bin" / "easy-cr"
+    cli_link = default_cli_destination(home=home)
     expected_cli = repo_root / "bin" / "easy-cr"
     resolved_config_dir = config_dir or config_path.expanduser().parent
     try:
@@ -737,6 +739,16 @@ def collect_status(
             )
 
     cli_target = cli_link.resolve(strict=False) if cli_link.is_symlink() else None
+    cli_installed = cli_link.is_symlink()
+    cli_source_matches = cli_target == expected_cli.resolve()
+    if os.name == "nt" and cli_link.is_file():
+        cli_installed = True
+        try:
+            cli_source_matches = str(expected_cli.resolve()) in cli_link.read_text(
+                encoding="utf-8"
+            )
+        except OSError:
+            cli_source_matches = False
     codex_installation = codex_installation_state(commands.get("codex"))
     claude_installation = claude_installation_state(
         commands.get("claude"),
@@ -746,12 +758,10 @@ def collect_status(
     helper_token_permission_ok = False
     helper_runtime_ready = False
     if helper_token_exists:
-        helper_token_permission_ok = (
-            stat.S_IMODE(MASTER_TOKEN_PATH.stat().st_mode) == 0o600
-        )
+        helper_token_permission_ok = private_permissions_ok(MASTER_TOKEN_PATH)
         try:
             helper_runtime_ready = helper_health(
-                MASTER_TOKEN_PATH.read_text().strip(),
+                MASTER_TOKEN_PATH.read_text(encoding="utf-8").strip(),
             )
         except OSError:
             helper_runtime_ready = False
@@ -759,8 +769,8 @@ def collect_status(
         "source": str(repo_root.resolve()),
         "cli": {
             "path": str(cli_link),
-            "installed": cli_link.is_symlink(),
-            "sourceMatches": cli_target == expected_cli.resolve(),
+            "installed": cli_installed,
+            "sourceMatches": cli_source_matches,
         },
         "clients": {
             "codex": {
@@ -786,6 +796,7 @@ def collect_status(
         "token": token_block,
         "helper": {
             "endpoint": HELPER_ENDPOINT,
+            "serviceInstalled": LAUNCH_AGENT_PATH.is_file(),
             "launchAgentInstalled": LAUNCH_AGENT_PATH.is_file(),
             "tokenExists": helper_token_exists,
             "tokenPermissionOk": helper_token_permission_ok,
@@ -849,7 +860,7 @@ def build_doctor_checks(payload: dict[str, Any]) -> list[dict[str, str]]:
         add(
             "token",
             token.get("exists", False) and token.get("permissionOk", False),
-            "本机 token 存在且权限为 0600",
+            "本机 token 存在且访问权限有效",
         )
         if configured in JETBRAINS_EDITOR_IDS or configured == "vscode":
             add(f"{configured}-app", bool(runtime.get("appInstalled")), f"{display} 应用")
@@ -865,15 +876,15 @@ def build_doctor_checks(payload: dict[str, Any]) -> list[dict[str, str]]:
         )
     helper = payload.get("helper", {})
     add(
-        "helper-launch-agent",
-        helper.get("launchAgentInstalled", False),
+        "helper-service",
+        helper.get("serviceInstalled", helper.get("launchAgentInstalled", False)),
         "单实例常驻服务已注册",
     )
     add(
         "helper-token",
         helper.get("tokenExists", False)
         and helper.get("tokenPermissionOk", False),
-        "helper token 存在且权限为 0600",
+        "helper token 存在且访问权限有效",
     )
     add(
         "helper-runtime",
@@ -993,7 +1004,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "open":
             return handle_open(args)
         if args.command == "comments":
-            source = args.report.read_text()
+            source = args.report.read_text(encoding="utf-8")
             payload = extract_comments(source)
             if args.resolve_batch:
                 payload = mark_batch_resolved(

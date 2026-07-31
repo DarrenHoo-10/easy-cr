@@ -146,7 +146,10 @@ async function focusVsCodeWindow(
 }
 
 async function readToken(): Promise<string> {
-  const tokenPath = path.join(homedir(), ".config", "easy-cr", TOKEN_FILENAME);
+  const configRoot = process.platform === "win32"
+    ? (process.env.APPDATA ?? path.join(homedir(), "AppData", "Roaming"))
+    : (process.env.XDG_CONFIG_HOME ?? path.join(homedir(), ".config"));
+  const tokenPath = path.join(configRoot, "easy-cr", TOKEN_FILENAME);
   const token = (await readFile(tokenPath, "utf8")).trim();
   if (!/^[A-Za-z0-9_-]{32,}$/.test(token)) {
     throw new Error("Invalid Easy CR token; run easy-cr config editor vscode");

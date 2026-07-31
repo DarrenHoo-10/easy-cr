@@ -1898,7 +1898,7 @@ function createExplanationBox(draft, state) {
   activeExplainLines.forEach(line => line.classList.remove('selected'));
   const box = document.createElement('div');
   box.className = 'explain-box';
-  box.innerHTML = `<div class="explain-head"><button class="explain-toggle" type="button" aria-expanded="true" title="展开/收起">▾</button><span>不懂就问</span></div><div class="explain-content"><div class="explain-thread"><div class="explain-empty">针对所选代码输入问题，可继续追问。</div></div><div class="explain-composer"><textarea placeholder="针对这段代码问 AI…" aria-label="向 AI 提问"></textarea><button class="explain-send" type="button">发送</button><div class="explain-hint">Enter 发送，Command+Enter 或 Shift+Enter 换行</div></div></div>`;
+  box.innerHTML = `<div class="explain-head"><button class="explain-toggle" type="button" aria-expanded="true" title="展开/收起">▾</button><span>不懂就问</span></div><div class="explain-content"><div class="explain-thread"><div class="explain-empty">针对所选代码输入问题，可继续追问。</div></div><div class="explain-composer"><textarea placeholder="针对这段代码问 AI…" aria-label="向 AI 提问"></textarea><button class="explain-send" type="button">发送</button><div class="explain-hint">Enter 发送，Command/Ctrl+Enter 或 Shift+Enter 换行</div></div></div>`;
   const toggle = box.querySelector('.explain-toggle');
   toggle.addEventListener('click', () => {
     box.classList.toggle('collapsed');
@@ -2155,7 +2155,7 @@ function explainTextSelection(draft, restoredState=null) {
 
   send.addEventListener('click', ask);
   textarea.addEventListener('keydown', event => {
-    if (event.key !== 'Enter' || event.metaKey || event.shiftKey) return;
+    if (event.key !== 'Enter' || event.metaKey || event.ctrlKey || event.shiftKey) return;
     event.preventDefault();
     ask();
   });
@@ -2747,7 +2747,7 @@ function renderReferences(payload, anchor) {
 
 async function queryReferences(event) {
   const identifier = event.target.closest('.code-identifier');
-  if (!semanticEnabled || !event.metaKey || !identifier) return;
+  if (!semanticEnabled || !(event.metaKey || event.ctrlKey) || !identifier) return;
   if (window.getSelection()?.toString()) return;
   const context = semanticReferenceContext(identifier);
   if (!context) return;
@@ -2871,7 +2871,7 @@ document.addEventListener('click', event => {
   if (
     identifier
     && semanticEnabled
-    && event.metaKey
+    && (event.metaKey || event.ctrlKey)
     && !window.getSelection()?.toString()
   ) {
     queryReferences(event);
@@ -2896,7 +2896,7 @@ taskPrompt.addEventListener('keydown', event => {
     cancelTaskAnnotation();
     return;
   }
-  if (event.key !== 'Enter' || event.metaKey || event.shiftKey) return;
+  if (event.key !== 'Enter' || event.metaKey || event.ctrlKey || event.shiftKey) return;
   event.preventDefault();
   saveTaskAnnotation();
 });

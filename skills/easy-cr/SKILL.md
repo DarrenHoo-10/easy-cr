@@ -113,7 +113,7 @@ When `editor.configured` is `null`, ask once:
 - If declined or deferred, run `easy-cr config editor none`.
 - Do not ask again after either choice is stored.
 
-When `easy-cr` is not installed yet, run `python3 "${SKILL_DIR}/../../scripts/install_cli.py"` from the plugin source root or use the internal `configure.py` fallback. When the user explicitly asks to view, initialize, diagnose, or change configuration, use `easy-cr status`, `easy-cr init`, `easy-cr doctor`, or `easy-cr config editor`.
+When `easy-cr` is not installed yet, run the bundled cross-platform Python launcher with `node "${SKILL_DIR}/../../scripts/python-runner.js" "${SKILL_DIR}/../../scripts/install_cli.py"` from the plugin source root or use the internal `configure.py` fallback. When the user explicitly asks to view, initialize, diagnose, or change configuration, use `easy-cr status`, `easy-cr init`, `easy-cr doctor`, or `easy-cr config editor`.
 
 ## Review workflow
 
@@ -148,7 +148,7 @@ When `easy-cr` is not installed yet, run `python3 "${SKILL_DIR}/../../scripts/in
 7. Render:
 
 ```bash
-python3 "${SKILL_DIR}/scripts/build_review.py" \
+node "${SKILL_DIR}/../../scripts/python-runner.js" "${SKILL_DIR}/scripts/build_review.py" \
   --manifest /absolute/path/to/repo/.codex-artifacts/YYYY-MM-DD-技术方案名称/manifest.json
 ```
 
@@ -196,7 +196,7 @@ The base HTML always supports:
 - Dark/light themes.
 - Document, chapter, selected-code and line comments.
 - Selecting code leaves the original browser selection unchanged and highlights only other exact repeated text on the current page. The repeated-text highlights clear as soon as the selection is cancelled. Right-click exposes `评论` and `不懂就问`, including selections that cross the line-number gutter.
-- Selecting text inside a `不懂就问` conversation exposes only `添加到任务`. It opens a compact annotation input beside the selection: Enter saves and closes it, Command+Enter and Shift+Enter insert newlines, and Escape cancels. Saved annotations use persistent Codex-style blue comment-bubble numbers at the source text; clicking a number reopens that annotation for editing, and adding another annotation does not hide existing numbers. The matching Q&A composer summarizes them with an `N 条注释` chip whose hover card shows selected text and user notes. The existing `不懂就问` send action submits annotations with the current question while rendering only the count chip and question body, not expanded annotation details. Source numbers and the composer chip clear immediately when the request starts. A failed request keeps the compact sent message and exposes a retry action. Saving never sends, never wakes the report-generating task, and never creates or mutates report comments.
+- Selecting text inside a `不懂就问` conversation exposes only `添加到任务`. It opens a compact annotation input beside the selection: Enter saves and closes it, Command/Ctrl+Enter and Shift+Enter insert newlines, and Escape cancels. Saved annotations use persistent Codex-style blue comment-bubble numbers at the source text; clicking a number reopens that annotation for editing, and adding another annotation does not hide existing numbers. The matching Q&A composer summarizes them with an `N 条注释` chip whose hover card shows selected text and user notes. The existing `不懂就问` send action submits annotations with the current question while rendering only the count chip and question body, not expanded annotation details. Source numbers and the composer chip clear immediately when the request starts. A failed request keeps the compact sent message and exposes a retry action. Saving never sends, never wakes the report-generating task, and never creates or mutates report comments.
 - Selected-code `不懂就问` opens an inline code Q&A box below the code. The reviewer asks the first question before any request is sent and can continue with follow-up questions; answers stream in place. One technical-plan directory reuses one read-only explanation session, and questions for that plan are processed FIFO. The page keeps a separate visible Q&A history for each selected code location in browser session storage keyed by `reportId`, so switching locations does not mix their panels and a refresh restores them; regenerated reports do not migrate the browser state. The left caret toggles collapse state and there is no close action.
 - Comment edit, delete, reply, resolve, summary popover and copy.
 - Persistence into the current HTML through the single local Easy CR helper, with a local pending draft while the service is unavailable.
@@ -210,11 +210,11 @@ The base HTML always supports:
 - The report header explains all code colors: additions, feedback changes, deletions, peer-step changes, and comment locations.
 - A complete logical unit is highlighted as the current change in at most one business step. If multiple steps use it, the first step in business order owns the entire unit and every later step renders the entire unit as a gray peer-step change; the unit is never split into mixed current/peer colors and report generation continues normally.
 - Previous and next navigation both name their destination; the outer edges return to the chapter overview.
-- `Enter` saves; `Command+Enter` and `Shift+Enter` insert a newline.
+- `Enter` saves; `Command/Ctrl+Enter` and `Shift+Enter` insert a newline.
 
 When an enhanced editor is configured:
 
-- Only Command+click on eligible identifiers requests references.
+- Only Command+click (macOS) or Ctrl+click (Windows) on eligible identifiers requests references.
 - With no references, the editor opens the clicked source position.
 - With one reference, the editor opens that call location directly.
 - With multiple references, HTML keeps focus and shows a choice list; clicking one opens its actual call location in the editor.

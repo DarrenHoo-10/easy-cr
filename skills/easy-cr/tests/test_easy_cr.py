@@ -7,6 +7,7 @@ import json
 import os
 import re
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,10 @@ from unittest import mock
 PLUGIN_DIR = Path(__file__).resolve().parents[3]
 SKILL_DIR = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = SKILL_DIR / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+import platform_support
 TEMPLATE_PATH = SKILL_DIR / "assets" / "review-template.html"
 JETBRAINS_PLUGIN = SKILL_DIR / "assets" / "jetbrains-plugin"
 HTTP_SERVICE = (
@@ -68,7 +73,7 @@ class PluginManifestTest(unittest.TestCase):
         marketplace = json.loads((PLUGIN_DIR / ".claude-plugin" / "marketplace.json").read_text())
 
         self.assertEqual(package["name"], "easy-cr")
-        self.assertEqual(package["bin"], {"easy-cr": "bin/easy-cr"})
+        self.assertEqual(package["bin"], {"easy-cr": "bin/easy-cr.js"})
         self.assertEqual(codex["name"], "easy-cr")
         self.assertEqual(codex["skills"], "./skills/")
         self.assertEqual(codex_marketplace["name"], "easy-cr")
@@ -87,6 +92,7 @@ class PluginManifestTest(unittest.TestCase):
         self.assertEqual(easy_cr_cli.VERSION, package["version"])
         self.assertTrue((PLUGIN_DIR / "skills" / "easy-cr" / "SKILL.md").is_file())
         self.assertTrue((PLUGIN_DIR / "bin" / "easy-cr").is_file())
+        self.assertTrue((PLUGIN_DIR / "bin" / "easy-cr.js").is_file())
 
     def test_skill_gates_discussion_batches_before_code_changes(self):
         skill = (SKILL_DIR / "SKILL.md").read_text()
@@ -136,7 +142,8 @@ class ConfigurationTest(unittest.TestCase):
             self.assertEqual(json.loads(config.read_text()), {"version": 1, "editor": "none"})
             self.assertEqual(semantic, {"mode": "none"})
             self.assertIsNone(warning)
-            self.assertEqual(config.parent.stat().st_mode & 0o777, 0o700)
+            if os.name != "nt":
+                self.assertEqual(config.parent.stat().st_mode & 0o777, 0o700)
 
     def test_goland_configuration_embeds_editor_neutral_payload(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -207,7 +214,7 @@ class ConfigurationTest(unittest.TestCase):
         self.assertEqual(semantic["token"], "V" * 43)
         self.assertEqual(semantic["appName"], "Visual Studio Code")
         self.assertIn("vscode://file", semantic["launchUri"])
-        self.assertIn(str(root.resolve()), semantic["launchUri"])
+        self.assertIn(root.resolve().as_posix(), semantic["launchUri"])
 
     def test_launch_uri_for_each_editor(self):
         repo = Path("/tmp/demo-repo")
@@ -226,14 +233,82 @@ class ConfigurationTest(unittest.TestCase):
         self.assertIsNone(easy_cr_config.launch_uri_for("none", repo))
 
     def test_launch_editor_uses_open_a(self):
-        with mock.patch.object(easy_cr_config.subprocess, "run") as run:
-            run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
-            with mock.patch.object(Path, "is_dir", return_value=True):
-                app = easy_cr_config.launch_editor("goland", "/tmp/project")
+        with mock.patch.object(easy_cr_config.sys, "platform", "darwin"):
+            with mock.patch.object(easy_cr_config.subprocess, "run") as run:
+                run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+                with mock.patch.object(Path, "is_dir", return_value=True):
+                    app = easy_cr_config.launch_editor("goland", "/tmp/project")
         self.assertEqual(app.name, "GoLand.app")
         command = run.call_args.args[0]
         self.assertEqual(command[:3], ["open", "-a", "GoLand"])
-        self.assertTrue(command[3].endswith("/tmp/project") or command[3] == "/tmp/project")
+        self.assertEqual(command[3], str(Path("/tmp/project").resolve()))
+
+    def test_windows_config_and_editor_launch_use_native_paths(self):
+        config = platform_support.default_config_dir(
+            home=Path("C:/Users/demo"),
+            environ={"APPDATA": "C:/Users/demo/AppData/Roaming"},
+            platform="win32",
+        )
+        self.assertEqual(
+            config,
+            Path("C:/Users/demo/AppData/Roaming/easy-cr"),
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            code = Path(temp) / "Code.exe"
+            code.write_bytes(b"")
+            project = Path(temp) / "repo"
+            project.mkdir()
+            completed = mock.Mock(returncode=0, stdout="", stderr="")
+            with mock.patch.object(
+                easy_cr_config,
+                "resolve_editor_command",
+                return_value=code,
+            ), mock.patch.object(
+                easy_cr_config.subprocess,
+                "run",
+                return_value=completed,
+            ) as run:
+                launched = easy_cr_config.launch_editor("vscode", project)
+        self.assertEqual(launched, code)
+        self.assertEqual(
+            run.call_args.args[0],
+            [str(code), "-r", str(project.resolve())],
+        )
+        candidates = easy_cr_config.candidate_editor_commands(
+            "vscode",
+            environ={
+                "LOCALAPPDATA": "C:/Users/demo/AppData/Local",
+                "ProgramFiles": "C:/Program Files",
+            },
+            platform="win32",
+        )
+        self.assertIn(
+            "C:/Users/demo/AppData/Local/Programs/Microsoft VS Code/bin/code.cmd",
+            [candidate.as_posix() for candidate in candidates],
+        )
+
+    def test_windows_intellij_discovery_covers_toolbox_layout(self):
+        with tempfile.TemporaryDirectory() as temp:
+            local = Path(temp)
+            executable = (
+                local
+                / "JetBrains"
+                / "Toolbox"
+                / "apps"
+                / "IDEA-U"
+                / "ch-0"
+                / "2026.1"
+                / "bin"
+                / "idea64.exe"
+            )
+            executable.parent.mkdir(parents=True)
+            executable.write_bytes(b"")
+            candidates = easy_cr_config.candidate_editor_commands(
+                "idea",
+                environ={"LOCALAPPDATA": str(local)},
+                platform="win32",
+            )
+        self.assertIn(executable, candidates)
 
     def test_invalid_or_incomplete_configuration_safely_degrades(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -303,7 +378,7 @@ class TemplateContractTest(unittest.TestCase):
 
         self.assertIn('id="reference-popover"', template)
         self.assertIn("semanticEnabled", template)
-        self.assertIn("!semanticEnabled || !event.metaKey", template)
+        self.assertIn("!(event.metaKey || event.ctrlKey)", template)
         self.assertIn("code-identifier", template)
         self.assertIn("/api/references", template)
         self.assertIn("/api/open", template)
@@ -317,7 +392,10 @@ class TemplateContractTest(unittest.TestCase):
 
     def test_base_mode_does_not_bind_semantic_requests(self):
         template = TEMPLATE_PATH.read_text()
-        self.assertIn("if (!semanticEnabled || !event.metaKey || !identifier) return;", template)
+        self.assertIn(
+            "if (!semanticEnabled || !(event.metaKey || event.ctrlKey) || !identifier) return;",
+            template,
+        )
         self.assertIn("window.getSelection()?.toString()", template)
 
     def test_jetbrains_adapter_uses_platform_reference_search(self):
@@ -399,6 +477,24 @@ class TemplateContractTest(unittest.TestCase):
                 chosen = setup_jetbrains.newest_plugins_dir(editor, app)
             self.assertEqual(chosen, support / "IntelliJIdea2025.3" / "plugins")
 
+    def test_jetbrains_plugins_dir_reads_windows_product_info(self):
+        editor = setup_jetbrains.jetbrains_editor("goland")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            app = root / "GoLand 2026.1"
+            app.mkdir()
+            (app / "product-info.json").write_text(
+                json.dumps({"dataDirectoryName": "GoLand2026.1"}),
+                encoding="utf-8",
+            )
+            support = root / "AppData" / "Roaming" / "JetBrains"
+            chosen = setup_jetbrains.newest_plugins_dir(
+                editor,
+                app,
+                support_root=support,
+            )
+        self.assertEqual(chosen, support / "GoLand2026.1" / "plugins")
+
     def test_vscode_extension_scaffold_exists(self):
         extension = SKILL_DIR / "assets" / "vscode-extension"
         package = json.loads((extension / "package.json").read_text())
@@ -413,6 +509,8 @@ class TemplateContractTest(unittest.TestCase):
         self.assertIn('EDITOR_ID = "vscode"', protocol)
         self.assertIn("executeReferenceProvider", extension_ts)
         self.assertIn("protocolVersion", server)
+        self.assertIn("process.env.APPDATA", extension_ts)
+        self.assertIn('System.getenv("APPDATA")', HTTP_SERVICE.read_text())
         self.assertIn("--install-extension", setup)
         self.assertIn("--force", setup)
         self.assertIn("vscode-token", setup)
@@ -423,15 +521,23 @@ class TemplateContractTest(unittest.TestCase):
         app_code = Path(
             "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
         )
-        with mock.patch.object(setup_vscode.shutil, "which", return_value=None):
-            with mock.patch.object(
-                setup_vscode,
-                "is_usable_code_command",
-                side_effect=lambda command: Path(command) == app_code,
-            ):
-                resolved = setup_vscode.resolve_code_command()
+        with mock.patch.object(
+            setup_vscode,
+            "candidate_editor_commands",
+            return_value=[app_code],
+        ), mock.patch.object(
+            setup_vscode,
+            "is_usable_code_command",
+            side_effect=lambda command: Path(command) == app_code,
+        ), mock.patch.object(
+            setup_vscode.shutil,
+            "which",
+            side_effect=lambda command: str(app_code) if command == str(app_code) else None,
+        ):
+            resolved = setup_vscode.resolve_code_command()
         self.assertEqual(resolved, app_code.resolve())
 
+    @unittest.skipIf(os.name == "nt", "Windows does not use a code symlink")
     def test_vscode_setup_creates_user_path_shim(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -441,7 +547,11 @@ class TemplateContractTest(unittest.TestCase):
             fake_code.chmod(0o755)
             user_bin = root / ".local" / "bin"
             with mock.patch.object(setup_vscode, "USER_BIN", user_bin):
-                with mock.patch.object(setup_vscode.shutil, "which", return_value=None):
+                with mock.patch.object(setup_vscode.shutil, "which", return_value=None), mock.patch.object(
+                    setup_vscode,
+                    "is_windows",
+                    return_value=False,
+                ):
                     shim = setup_vscode.ensure_user_code_shim(fake_code)
             self.assertIsNotNone(shim)
             assert shim is not None
@@ -451,7 +561,11 @@ class TemplateContractTest(unittest.TestCase):
             shim.unlink()
             shim.write_text("keep")
             with mock.patch.object(setup_vscode, "USER_BIN", user_bin):
-                with mock.patch.object(setup_vscode.shutil, "which", return_value=None):
+                with mock.patch.object(setup_vscode.shutil, "which", return_value=None), mock.patch.object(
+                    setup_vscode,
+                    "is_windows",
+                    return_value=False,
+                ):
                     again = setup_vscode.ensure_user_code_shim(fake_code)
             self.assertIsNone(again)
             self.assertEqual(shim.read_text(), "keep")
@@ -794,7 +908,7 @@ class TemplateContractTest(unittest.TestCase):
                     "/repo/.codex-artifacts/2026-07-29-旧方案/manifest.json"
                 ),
             ),
-            Path("/repo/.codex-artifacts/2026-07-29-旧方案/review.html"),
+            Path("/repo/.codex-artifacts/2026-07-29-旧方案/review.html").resolve(),
         )
 
         self.assertNotEqual(
@@ -816,7 +930,7 @@ class TemplateContractTest(unittest.TestCase):
         self.assertNotIn("scheduleSemanticHighlight", template)
         self.assertNotIn("lockSemanticHighlight", template)
         self.assertNotIn("semantic-reference-match", template)
-        self.assertIn("&& event.metaKey", template)
+        self.assertIn("&& (event.metaKey || event.ctrlKey)", template)
         self.assertIn("chapterCommentsFilter", template)
         self.assertIn("scheduleCommentsPopoverOpen(count", template)
         self.assertIn("item.addEventListener('click', () => focusComment(comment))", template)
@@ -905,7 +1019,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(configured, "vscode")
         run.assert_called_once_with(
             [
-                "/Applications/Visual Studio Code.app/code",
+                str(Path("/Applications/Visual Studio Code.app/code")),
                 "--list-extensions",
             ],
             allow_failure=True,
@@ -1297,6 +1411,7 @@ class CliTest(unittest.TestCase):
 
 
 class CliInstallerTest(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "Windows source installs use a .cmd launcher")
     def test_install_creates_and_reuses_expected_symlink(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1311,6 +1426,7 @@ class CliInstallerTest(unittest.TestCase):
         self.assertEqual(first, "created")
         self.assertEqual(second, "unchanged")
 
+    @unittest.skipIf(os.name == "nt", "Windows source installs use a .cmd launcher")
     def test_install_updates_old_easy_cr_symlink(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1328,6 +1444,7 @@ class CliInstallerTest(unittest.TestCase):
 
         self.assertEqual(result, "updated")
 
+    @unittest.skipIf(os.name == "nt", "Windows source installs use a .cmd launcher")
     def test_install_rejects_regular_file_and_unrelated_symlink(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1347,6 +1464,34 @@ class CliInstallerTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 install_cli.install_symlink(source, destination)
 
+    def test_windows_launcher_is_idempotent_and_rejects_unrelated_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "easy-cr" / "bin" / "easy-cr"
+            source.parent.mkdir(parents=True)
+            source.write_text("#!/usr/bin/env python3\n")
+            destination = root / "bin" / "easy-cr.cmd"
+            python = root / "Python" / "python.exe"
+
+            first = install_cli.install_windows_launcher(
+                source,
+                destination,
+                python=python,
+            )
+            second = install_cli.install_windows_launcher(
+                source,
+                destination,
+                python=python,
+            )
+            content = destination.read_text(encoding="utf-8")
+            destination.write_text("@echo unrelated\n", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                install_cli.install_windows_launcher(source, destination, python=python)
+
+        self.assertEqual(first, "created")
+        self.assertEqual(second, "unchanged")
+        self.assertIn("-X utf8", content)
+        self.assertIn(str(source.resolve()), content)
 
 class BuildReviewTest(unittest.TestCase):
     def assert_inline_javascript_compiles(self, rendered: str) -> None:
@@ -3007,6 +3152,22 @@ class HelperServiceTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             easy_cr_helper.codex_thread_url("../../settings")
 
+        with mock.patch.object(
+            easy_cr_helper.os,
+            "name",
+            "nt",
+        ), mock.patch.object(
+            easy_cr_helper.os,
+            "startfile",
+            create=True,
+        ) as startfile, mock.patch.object(easy_cr_helper.time, "sleep"):
+            opened = easy_cr_helper._default_client_opener({
+                "client": "codex",
+                "sessionId": session_id,
+            })
+        self.assertTrue(opened)
+        startfile.assert_called_once_with(f"codex://threads/{session_id}")
+
         launched: list[str] = []
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -3072,13 +3233,13 @@ class HelperServiceTest(unittest.TestCase):
         )
 
         self.assertEqual(codex[:4], [
-            "/Applications/Codex",
+            str(Path("/Applications/Codex")),
             "exec",
             "resume",
             "codex-session",
         ])
         self.assertEqual(claude[:4], [
-            "/usr/local/bin/claude",
+            str(Path("/usr/local/bin/claude")),
             "--resume",
             "claude-session",
             "--print",
@@ -3111,7 +3272,10 @@ class HelperServiceTest(unittest.TestCase):
             codex_command=Path("/Applications/Codex"),
         )
 
-        self.assertEqual(codex[:3], ["/Applications/Codex", "exec", "--ephemeral"])
+        self.assertEqual(
+            codex[:3],
+            [str(Path("/Applications/Codex")), "exec", "--ephemeral"],
+        )
         self.assertIn("--sandbox", codex)
         self.assertIn("read-only", codex)
         self.assertIn("--json", codex)
@@ -3149,7 +3313,7 @@ class HelperServiceTest(unittest.TestCase):
         self.assertEqual(
             first[:7],
             [
-                "/usr/local/bin/claude",
+                str(Path("/usr/local/bin/claude")),
                 "--resume",
                 "source-session",
                 "--fork-session",
@@ -3161,7 +3325,7 @@ class HelperServiceTest(unittest.TestCase):
         self.assertEqual(
             second[:4],
             [
-                "/usr/local/bin/claude",
+                str(Path("/usr/local/bin/claude")),
                 "--resume",
                 "11111111-1111-4111-8111-111111111111",
                 "--print",
@@ -3203,6 +3367,10 @@ class HelperServiceTest(unittest.TestCase):
             easy_cr_helper.subprocess,
             "Popen",
             return_value=FakeProcess(),
+        ) as popen, mock.patch.object(
+            easy_cr_helper,
+            "_silent_process_options",
+            return_value={"creationflags": 123},
         ):
             chunks = list(easy_cr_helper._default_explainer(
                 {
@@ -3224,6 +3392,54 @@ class HelperServiceTest(unittest.TestCase):
         self.assertIn('"ephemeral": false', written)
         self.assertIn('"sandbox": "read-only"', written)
         self.assertIn('"method": "turn/start"', written)
+        self.assertEqual(popen.call_args.kwargs["creationflags"], 123)
+
+    def test_default_explainer_hides_cli_fallback_worker(self):
+        class FakeProcess:
+            stdout = io.StringIO("answer")
+
+            @staticmethod
+            def wait(timeout: int) -> int:
+                return 0
+
+            @staticmethod
+            def poll() -> int:
+                return 0
+
+            @staticmethod
+            def kill() -> None:
+                raise AssertionError("successful process must not be killed")
+
+        with mock.patch.object(
+            easy_cr_helper,
+            "explanation_command",
+            return_value=[str(Path(__file__)), "--print", "prompt"],
+        ), mock.patch.object(
+            easy_cr_helper,
+            "_silent_process_options",
+            return_value={"creationflags": 456},
+        ), mock.patch.object(
+            easy_cr_helper.subprocess,
+            "Popen",
+            return_value=FakeProcess(),
+        ) as popen:
+            chunks = list(easy_cr_helper._default_explainer(
+                {
+                    "client": "claude",
+                    "cwd": "/repo",
+                    "sessionId": "source-thread",
+                    "reportSubject": "帐期优化",
+                },
+                Path("/repo/.codex-artifacts/review.html"),
+                {
+                    "selection": "return nil",
+                    "question": "为什么？",
+                    "history": [],
+                },
+            ))
+
+        self.assertEqual(chunks, ["answer"])
+        self.assertEqual(popen.call_args.kwargs["creationflags"], 456)
 
     def test_codex_app_server_resumes_existing_explanation_session(self):
         class FakeProcess:
@@ -3254,6 +3470,10 @@ class HelperServiceTest(unittest.TestCase):
             easy_cr_helper.subprocess,
             "Popen",
             return_value=FakeProcess(),
+        ) as popen, mock.patch.object(
+            easy_cr_helper,
+            "_silent_process_options",
+            return_value={"creationflags": 789},
         ):
             chunks = list(easy_cr_helper._codex_app_server_explainer(
                 agent,
@@ -3268,7 +3488,9 @@ class HelperServiceTest(unittest.TestCase):
         self.assertIn('"method": "thread/resume"', written)
         self.assertIn('"threadId": "child-thread"', written)
         self.assertNotIn('"method": "thread/fork"', written)
+        self.assertEqual(popen.call_args.kwargs["creationflags"], 789)
 
+    @unittest.skipUnless(hasattr(socket, "AF_UNIX"), "AF_UNIX is unavailable")
     def test_codex_native_ipc_starts_turn_in_bound_desktop_thread(self):
         session_id = "019f88f5-e5d7-7ff1-bac3-7c46ab1fd365"
         received: list[dict] = []
@@ -3330,6 +3552,66 @@ class HelperServiceTest(unittest.TestCase):
         )
         self.assertEqual(result["resultType"], "success")
 
+    def test_codex_windows_named_pipe_starts_turn_in_bound_desktop_thread(self):
+        class FakePipe:
+            def __init__(self):
+                self.received: list[dict] = []
+                self.pending = bytearray()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def write(self, frame: bytes) -> int:
+                size = struct.unpack("<I", frame[:4])[0]
+                payload = json.loads(frame[4:4 + size])
+                self.received.append(payload)
+                if payload["method"] == "initialize":
+                    result = {"clientId": "windows-easy-cr-client"}
+                else:
+                    result = {"result": {"turn": {"id": "turn-1"}}}
+                response = json.dumps({
+                    "type": "response",
+                    "requestId": payload["requestId"],
+                    "resultType": "success",
+                    "method": payload["method"],
+                    "result": result,
+                }).encode()
+                self.pending.extend(struct.pack("<I", len(response)) + response)
+                return len(frame)
+
+            def flush(self) -> None:
+                return None
+
+            def read(self, size: int) -> bytes:
+                chunk = bytes(self.pending[:size])
+                del self.pending[:size]
+                return chunk
+
+        session_id = "019f88f5-e5d7-7ff1-bac3-7c46ab1fd365"
+        pipe = FakePipe()
+        with mock.patch("builtins.open", return_value=pipe) as open_pipe:
+            result = easy_cr_helper.submit_codex_turn(
+                session_id,
+                "处理 Windows 评论",
+                platform_name="nt",
+                pipe_path=r"\\.\pipe\codex-ipc-test",
+            )
+
+        open_pipe.assert_called_once_with(
+            r"\\.\pipe\codex-ipc-test",
+            "r+b",
+            buffering=0,
+        )
+        self.assertEqual(pipe.received[0]["method"], "initialize")
+        request = pipe.received[1]
+        self.assertEqual(request["method"], "thread-follower-start-turn")
+        self.assertEqual(request["sourceClientId"], "windows-easy-cr-client")
+        self.assertEqual(request["params"]["conversationId"], session_id)
+        self.assertEqual(result["resultType"], "success")
+
     def test_default_launcher_uses_codex_desktop_ipc(self):
         report = Path("/repo/.codex-artifacts/review.html")
         session_id = "019f88f5-e5d7-7ff1-bac3-7c46ab1fd365"
@@ -3370,6 +3652,10 @@ class HelperServiceTest(unittest.TestCase):
             side_effect=RuntimeError("no-client-found"),
         ), mock.patch.object(
             easy_cr_helper,
+            "_codex_cli_fallback_allowed",
+            return_value=True,
+        ), mock.patch.object(
+            easy_cr_helper,
             "agent_command",
             return_value=[
                 str(easy_cr_helper.CODEX_APP_COMMAND),
@@ -3378,7 +3664,10 @@ class HelperServiceTest(unittest.TestCase):
                 session_id,
                 "prompt",
             ],
-        ), mock.patch.object(subprocess, "Popen") as popen:
+        ), mock.patch.object(Path, "is_file", return_value=True), mock.patch.object(
+            subprocess,
+            "Popen",
+        ) as popen:
             easy_cr_helper._default_launcher(agent, report)
 
         popen.assert_called_once()
@@ -3391,7 +3680,31 @@ class HelperServiceTest(unittest.TestCase):
                 session_id,
             ],
         )
-        self.assertEqual(popen.call_args.kwargs["cwd"], Path("/repo"))
+        self.assertEqual(popen.call_args.kwargs["cwd"], Path("/repo").resolve())
+
+    def test_default_launcher_never_falls_back_to_cli_on_windows(self):
+        report = Path("/repo/.codex-artifacts/review.html")
+        agent = {
+            "client": "codex",
+            "sessionId": "019f88f5-e5d7-7ff1-bac3-7c46ab1fd365",
+            "cwd": "/repo",
+            "reportSubject": "帐期优化",
+            "reviewBatchId": "batch-1",
+            "reviewCommentIds": ["c1"],
+        }
+        with mock.patch.object(
+            easy_cr_helper,
+            "submit_codex_turn",
+            side_effect=RuntimeError("named-pipe-unavailable"),
+        ), mock.patch.object(
+            easy_cr_helper,
+            "_codex_cli_fallback_allowed",
+            return_value=False,
+        ), mock.patch.object(subprocess, "Popen") as popen:
+            with self.assertRaisesRegex(RuntimeError, "named-pipe-unavailable"):
+                easy_cr_helper._default_launcher(agent, report)
+
+        popen.assert_not_called()
 
     def test_launch_agent_uses_one_fixed_label_and_dedicated_port(self):
         payload = easy_cr_helper.launch_agent_payload(
@@ -3412,6 +3725,40 @@ class HelperServiceTest(unittest.TestCase):
         }
         self.assertNotIn(easy_cr_helper.HELPER_ENDPOINT, editor_endpoints)
         self.assertTrue(payload["KeepAlive"])
+
+    def test_windows_helper_installs_startup_command_without_launchd(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            startup = root / "Startup" / "easy-cr-helper.cmd"
+            token = root / "config" / "helper-token"
+            python = root / "Python" / "python.exe"
+            helper = root / "plugin" / "easy_cr_helper.py"
+            script = easy_cr_helper.windows_startup_script(python, helper, token)
+            with mock.patch.object(easy_cr_helper.os, "name", "nt"), mock.patch.object(
+                easy_cr_helper,
+                "LOG_DIR",
+                root / "logs",
+            ), mock.patch.object(
+                easy_cr_helper,
+                "helper_health",
+                return_value=True,
+            ), mock.patch.object(
+                easy_cr_helper,
+                "_run_launchctl",
+            ) as launchctl:
+                installed = easy_cr_helper.install_helper_service(
+                    launch_agent_path=startup,
+                    token_path=token,
+                    python=python,
+                    helper_script=helper,
+                )
+            saved = startup.read_text(encoding="utf-8-sig")
+
+        self.assertEqual(installed, startup)
+        self.assertIn("start \"\" /b", script)
+        self.assertIn("-X utf8", script)
+        self.assertIn("64346", saved)
+        launchctl.assert_not_called()
 
 
 if __name__ == "__main__":

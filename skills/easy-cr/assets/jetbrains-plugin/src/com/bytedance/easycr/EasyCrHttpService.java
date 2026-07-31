@@ -584,6 +584,24 @@ public final class EasyCrHttpService implements Disposable {
         }
 
         Path tokenPath() {
+            String osName = System.getProperty("os.name", "");
+            if (osName.startsWith("Windows")) {
+                String appData = System.getenv("APPDATA");
+                if (appData != null && !appData.isBlank()) {
+                    return Path.of(appData, "easy-cr", tokenFile);
+                }
+                return Path.of(
+                        System.getProperty("user.home"),
+                        "AppData",
+                        "Roaming",
+                        "easy-cr",
+                        tokenFile
+                );
+            }
+            String xdgConfigHome = System.getenv("XDG_CONFIG_HOME");
+            if (xdgConfigHome != null && !xdgConfigHome.isBlank()) {
+                return Path.of(xdgConfigHome, "easy-cr", tokenFile);
+            }
             return Path.of(
                     System.getProperty("user.home"),
                     ".config",

@@ -1,6 +1,6 @@
 {
   "name": "easy-cr",
-  "version": "1.4.3",
+  "version": "1.5.0",
   "description": "Generate business-sequenced HTML code reviews with comments and optional GoLand, IntelliJ IDEA, or VS Code semantic navigation.",
   "keywords": [
     "codex",
@@ -16,7 +16,7 @@
   },
   "license": "UNLICENSED",
   "bin": {
-    "easy-cr": "bin/easy-cr"
+    "easy-cr": "bin/easy-cr.js"
   },
   "files": [
     ".agents/plugins/marketplace.json",
@@ -24,7 +24,9 @@
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
     "bin/easy-cr",
+    "bin/easy-cr.js",
     "scripts/install_cli.py",
+    "scripts/python-runner.js",
     "skills/easy-cr/SKILL.md",
     "skills/easy-cr/agents/",
     "skills/easy-cr/assets/",
@@ -32,7 +34,7 @@
     "skills/easy-cr/scripts/*.py"
   ],
   "scripts": {
-    "test": "python3 -m py_compile skills/easy-cr/scripts/*.py && python3 -m unittest discover -s skills/easy-cr/tests -v",
+    "test": "node scripts/test.js",
     "prepack": "npm test"
   },
   "publishConfig": {
