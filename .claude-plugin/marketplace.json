@@ -9,7 +9,7 @@
     {
       "name": "easy-cr",
       "description": "Guided multi-repository HTML code reviews with portable comments and optional GoLand, IntelliJ IDEA, or VS Code navigation.",
-      "version": "1.4.3",
+      "version": "1.5.0",
       "source": "./",
       "category": "productivity"
     }

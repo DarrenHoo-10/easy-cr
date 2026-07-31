@@ -68,7 +68,7 @@ Easy CR 把散落在多个文件、甚至多个仓库中的改动，整理成一
 重新生成后，上一轮已经看过的新增代码显示为浅绿色，本轮反馈产生的修改显示为
 深绿色，删除显示为浅红色，方便快速聚焦最新变化。
 
-遇到需要深挖的逻辑时，按住 `Command` 点击代码标识符即可查看项目内引用：
+遇到需要深挖的逻辑时，macOS 按住 `Command`、Windows 按住 `Ctrl` 点击代码标识符即可查看项目内引用：
 
 - 没有引用时，打开当前代码位置。
 - 只有一处引用时，直接跳到调用位置。
@@ -77,6 +77,9 @@ Easy CR 把散落在多个文件、甚至多个仓库中的改动，整理成一
 目前支持跳转到 GoLand、IntelliJ IDEA 和 Visual Studio Code。你可以留在 Easy CR 中把握整体方案，也可以随时进入熟悉的编辑器做深度评审。
 
 ## 快速开始
+
+Easy CR 支持 macOS 和 Windows 10/11，需要 Node.js 18+、Python 3.10+ 与 Git。
+Windows 同时支持 `py -3` 和 `python`，不要求系统存在 `python3` 命令。
 
 ### 1. 安装
 
@@ -111,6 +114,12 @@ easy-cr init \
   --client codex \
   --client claude \
   --non-interactive
+```
+
+PowerShell 可直接写成一行：
+
+```powershell
+easy-cr init --editor vscode --client codex --client claude --non-interactive
 ```
 
 Codex 用户初始化后新建一个任务，让 Easy CR skill 生效。
@@ -148,14 +157,14 @@ Easy CR 会分析改动、还原技术方案、生成 HTML 并在浏览器中打
 在评审页面中：
 
 - 在报告、章节、代码行或选中代码上添加评论；代码选区右键仍显示 **评论 / 不懂就问**。
-- 选中「不懂就问」对话中的文本后，右键只显示 **添加到任务**；页面会在选区旁展示轻量输入框。Enter 保存并收起输入框，Command+Enter 和 Shift+Enter 用于换行，Escape 取消，不会在保存时发送。
+- 选中「不懂就问」对话中的文本后，右键只显示 **添加到任务**；页面会在选区旁展示轻量输入框。Enter 保存并收起输入框，Command/Ctrl+Enter 和 Shift+Enter 用于换行，Escape 取消，不会在保存时发送。
 - 已保存注释以 Codex 风格的蓝色评论气泡编号标在原文右上角，点击编号可以再次编辑；新增下一条时，已有编号继续保留。注释汇总为当前问答输入区的 **N 条注释**，悬浮可查看所选文本和用户评论。
 - 点击现有「不懂就问」发送按钮时，注释才会随问题一起提交。发送区仅显示注释数量和问题正文，不展开注释详情；页面上的编号和汇总会立即清除。请求失败时保留这条紧凑消息，并提供重新发送入口。
 - 对话注释只保存在当前页面的任务草稿中，不计入评论数量，也不参与评论状态流转；刷新页面会保留，显式发送开始或重新生成报告后清空。
 - 代码选区右键选择 **不懂就问**，可在代码下方先提问并继续追问。同一技术方案共用一个只读解释会话并按提问顺序处理，页面仍按代码位置分别展示问答。
 - 对已有评论继续回复。
 - 按 `Enter` 保存评论。
-- 按 `Command+Enter` 或 `Shift+Enter` 在评论中换行。
+- 按 `Command/Ctrl+Enter` 或 `Shift+Enter` 在评论中换行。
 - 点击顶部“评论 N”检查本轮全部评审意见。
 - 点击右上角 **发送评论给 AI**。
 
@@ -175,10 +184,21 @@ easy-cr config editor vscode
 
 如果目标编辑器已经配置过，命令只切换当前选择，不会重复安装扩展，也不会启动或重启编辑器。只有首次配置或本地配置不完整时，Easy CR 才会补齐安装。
 
+Windows 会自动发现 PATH、Visual Studio Code 的用户/系统安装目录，以及 JetBrains
+Toolbox、`Program Files` 和用户级 `Programs` 中的 GoLand/IntelliJ IDEA。配置和 token
+位于 `%APPDATA%\easy-cr`；macOS 仍使用 `~/.config/easy-cr`。`easy-cr init` 还会在
+Windows 用户启动目录注册评论服务，并立即以后台进程启动。
+
 需要打开项目时显式执行：
 
 ```bash
 easy-cr open --project /path/to/repository
+```
+
+PowerShell 示例：
+
+```powershell
+easy-cr open --project C:\work\repository
 ```
 
 检查插件和编辑器联动状态：
@@ -249,11 +269,24 @@ easy-cr doctor
 
 ## 从源码运行
 
+macOS/Linux：
+
 ```bash
 python3 scripts/install_cli.py
 easy-cr init
 npm test
 ```
+
+Windows PowerShell：
+
+```powershell
+python scripts/install_cli.py
+$env:PATH += ";$HOME\.local\bin"
+easy-cr init
+npm test
+```
+
+通过 `npm install --global easy-cr` 安装时，npm 会直接创建 Windows 命令入口，不需要手动修改 PATH。
 
 ## 反馈
 

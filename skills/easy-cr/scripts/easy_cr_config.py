@@ -8,13 +8,22 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from platform_support import apply_permissions, default_config_dir
 
 
-CONFIG_DIR = Path.home() / ".config" / "easy-cr"
+CONFIG_DIR = default_config_dir()
 CONFIG_PATH = CONFIG_DIR / "config.json"
 TOKEN_PATH = CONFIG_DIR / "goland-token"
 GOLAND_ENDPOINT = "http://127.0.0.1:64343"
@@ -96,7 +105,7 @@ def token_path_for_editor(
 
 def read_editor(path: Path = CONFIG_PATH) -> str | None:
     try:
-        payload: Any = json.loads(path.expanduser().read_text())
+        payload: Any = json.loads(path.expanduser().read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
     except (OSError, json.JSONDecodeError) as error:
@@ -116,7 +125,7 @@ def write_editor(editor: str, path: Path = CONFIG_PATH) -> Path:
     editor_descriptor(editor)
     path = path.expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.parent.chmod(0o700)
+    apply_permissions(path.parent, 0o700)
     payload = json.dumps(
         {"version": 1, "editor": editor},
         ensure_ascii=False,
@@ -132,9 +141,9 @@ def write_editor(editor: str, path: Path = CONFIG_PATH) -> Path:
     try:
         with os.fdopen(descriptor, "w") as stream:
             stream.write(payload)
-        temporary.chmod(0o600)
+        apply_permissions(temporary, 0o600)
         os.replace(temporary, path)
-        path.chmod(0o600)
+        apply_permissions(path, 0o600)
     finally:
         temporary.unlink(missing_ok=True)
     return path
@@ -143,7 +152,7 @@ def write_editor(editor: str, path: Path = CONFIG_PATH) -> Path:
 def read_token(path: Path = TOKEN_PATH, editor: str = "goland") -> str:
     display_name = editor_descriptor(editor).display_name
     try:
-        token = path.expanduser().read_text().strip()
+        token = path.expanduser().read_text(encoding="utf-8").strip()
     except FileNotFoundError as error:
         raise ConfigError(f"{display_name} 扩展尚未安装或 token 缺失") from error
     except OSError as error:
@@ -160,6 +169,11 @@ def launch_uri_for(editor: str, repo: str | Path | None = None) -> str | None:
     if not template:
         return None
     repo_path = Path(repo or ".").expanduser().resolve()
+    if editor == "vscode":
+        uri_path = quote(repo_path.as_posix(), safe="/:")
+        if not uri_path.startswith("/"):
+            uri_path = "/" + uri_path
+        return f"vscode://file{uri_path}"
     return (
         template
         .replace("{repo}", str(repo_path))
@@ -167,11 +181,92 @@ def launch_uri_for(editor: str, repo: str | Path | None = None) -> str | None:
     )
 
 
+def candidate_editor_commands(
+    editor: str,
+    *,
+    environ: Mapping[str, str] | None = None,
+    platform: str | None = None,
+) -> list[Path]:
+    """Return native editor launcher candidates in preference order."""
+    values = os.environ if environ is None else environ
+    platform_name = platform or sys.platform
+    names = {
+        "goland": ("goland64", "goland"),
+        "idea": ("idea64", "idea"),
+        "vscode": ("code",),
+    }[editor]
+    candidates: list[Path] = []
+    for name in names:
+        command = shutil.which(name)
+        if command:
+            candidates.append(Path(command))
+    if platform_name.startswith("win"):
+        local = Path(values.get("LOCALAPPDATA", "")) if values.get("LOCALAPPDATA") else None
+        program_files = [
+            Path(values[name])
+            for name in ("ProgramFiles", "ProgramFiles(x86)")
+            if values.get(name)
+        ]
+        if editor == "vscode":
+            if local:
+                candidates.extend([
+                    local / "Programs" / "Microsoft VS Code" / "bin" / "code.cmd",
+                    local / "Programs" / "Microsoft VS Code" / "Code.exe",
+                ])
+            for root in program_files:
+                candidates.extend([
+                    root / "Microsoft VS Code" / "bin" / "code.cmd",
+                    root / "Microsoft VS Code" / "Code.exe",
+                ])
+        else:
+            executable = "goland64.exe" if editor == "goland" else "idea64.exe"
+            patterns = (
+                ("GoLand*",)
+                if editor == "goland"
+                else ("IntelliJ IDEA*", "IntelliJIdea*", "IDEA*")
+            )
+            roots = [root / "JetBrains" for root in program_files]
+            if local:
+                roots.extend([
+                    local / "Programs" / "JetBrains",
+                    local / "JetBrains" / "Toolbox" / "apps",
+                ])
+            for root in roots:
+                if not root.is_dir():
+                    continue
+                for pattern in patterns:
+                    candidates.extend(root.glob(f"{pattern}/bin/{executable}"))
+                    candidates.extend(root.glob(f"{pattern}/*/*/bin/{executable}"))
+                    candidates.extend(root.glob(f"{pattern}/*/bin/{executable}"))
+    elif editor == "vscode":
+        candidates.extend([
+            Path("/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"),
+            Path("/usr/local/bin/code"),
+            Path("/opt/homebrew/bin/code"),
+        ])
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = os.path.normcase(str(candidate))
+        if key not in seen:
+            seen.add(key)
+            unique.append(candidate)
+    return unique
+
+
+def resolve_editor_command(editor: str) -> Path:
+    for candidate in candidate_editor_commands(editor):
+        if candidate.is_file():
+            return candidate.resolve()
+    display = editor_descriptor(editor).display_name
+    raise RuntimeError(f"未找到 {display} 可执行文件，请先安装或将其命令加入 PATH")
+
+
 def launch_editor(
     editor: str,
     project_path: str | Path | None = None,
 ) -> Path:
-    """Launch the configured macOS editor app, optionally opening a project.
+    """Launch the configured desktop editor, optionally opening a project.
 
     Returns the application path that was requested. Raises RuntimeError when
     the editor cannot be launched from this machine.
@@ -179,35 +274,40 @@ def launch_editor(
     descriptor = editor_descriptor(editor)
     if descriptor.app_name is None:
         raise RuntimeError(f"{editor} 不支持自动启动")
-    app = Path("/Applications") / f"{descriptor.app_name}.app"
-    if not app.is_dir():
-        raise RuntimeError(f"未找到应用：{app}")
-    command = ["open", "-a", descriptor.app_name]
-    if project_path is not None:
-        project = Path(project_path).expanduser().resolve()
-        command.append(str(project))
-    # Prefer the discovered VS Code CLI when available so the workspace opens
-    # in the same installation that hosts the Easy CR extension.
-    if editor == "vscode":
-        code = shutil.which("code")
-        app_code = Path(
-            "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
-        )
-        cli = Path(code) if code else (app_code if app_code.is_file() else None)
-        if cli is not None:
-            args = [str(cli)]
-            if project_path is not None:
-                args.extend(["-r", str(Path(project_path).expanduser().resolve())])
-            else:
-                args.append("-r")
-            result = subprocess.run(args, text=True, capture_output=True, check=False)
-            if result.returncode == 0:
-                return app
+    project = Path(project_path).expanduser().resolve() if project_path is not None else None
+    if sys.platform == "darwin":
+        app = Path("/Applications") / f"{descriptor.app_name}.app"
+        if not app.is_dir():
+            raise RuntimeError(f"未找到应用：{app}")
+        if editor == "vscode":
+            try:
+                cli = resolve_editor_command(editor)
+            except RuntimeError:
+                cli = None
+            if cli is not None:
+                args = [str(cli), "-r"]
+                if project is not None:
+                    args.append(str(project))
+                result = subprocess.run(args, text=True, capture_output=True, check=False)
+                if result.returncode == 0:
+                    return app
+        command = ["open", "-a", descriptor.app_name]
+        if project is not None:
+            command.append(str(project))
+        requested = app
+    else:
+        executable = resolve_editor_command(editor)
+        command = [str(executable)]
+        if editor == "vscode":
+            command.append("-r")
+        if project is not None:
+            command.append(str(project))
+        requested = executable
     result = subprocess.run(command, text=True, capture_output=True, check=False)
     if result.returncode:
         detail = result.stderr.strip() or result.stdout.strip() or "open failed"
         raise RuntimeError(f"启动 {descriptor.display_name} 失败：{detail}")
-    return app
+    return requested
 
 
 def resolve_semantic(

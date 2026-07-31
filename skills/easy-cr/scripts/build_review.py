@@ -725,7 +725,7 @@ def default_display_mode(item: DiffFile) -> str:
 def reviewed_source(repository: RepositoryReview, path: str) -> str:
     if repository.head == "WORKTREE":
         target = repository.root / path
-        return target.read_text() if target.is_file() else ""
+        return target.read_text(encoding="utf-8") if target.is_file() else ""
     result = run_git(
         repository.root,
         "show",
@@ -1346,7 +1346,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.context < 0 or args.context > 100:
         raise ValueError("context must be between 0 and 100")
     manifest_path = args.manifest.expanduser().resolve()
-    raw_manifest = json.loads(manifest_path.read_text())
+    raw_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(raw_manifest, dict):
         raise ValueError("manifest root must be an object")
     schema_version, specs = resolve_repository_specs(raw_manifest, args)
@@ -1365,7 +1365,7 @@ def main(argv: list[str] | None = None) -> int:
             manifest_path=manifest_path,
         )
     )
-    previous_html = output.read_text() if output.is_file() else None
+    previous_html = output.read_text(encoding="utf-8") if output.is_file() else None
     previous_state = (
         extract_review_state(previous_html)
         if previous_html is not None
@@ -1486,9 +1486,9 @@ def main(argv: list[str] | None = None) -> int:
             repositories,
         ),
     }
-    rendered = replace_template(TEMPLATE_PATH.read_text(), values)
+    rendered = replace_template(TEMPLATE_PATH.read_text(encoding="utf-8"), values)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(rendered)
+    output.write_text(rendered, encoding="utf-8")
     print(output.resolve())
     return 0
 

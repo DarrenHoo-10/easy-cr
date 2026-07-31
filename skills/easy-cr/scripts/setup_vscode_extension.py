@@ -12,7 +12,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from easy_cr_config import CONFIG_DIR
+from easy_cr_config import CONFIG_DIR, candidate_editor_commands
+from platform_support import apply_permissions, is_windows
 
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
@@ -40,12 +41,12 @@ def run(command: list[str], *, cwd: Path | None = None) -> subprocess.CompletedP
 def ensure_token(path: Path) -> Path:
     path = path.expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.parent.chmod(0o700)
+    apply_permissions(path.parent, 0o700)
     if not path.exists():
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w") as stream:
             stream.write(secrets.token_urlsafe(32))
-    path.chmod(0o600)
+    apply_permissions(path, 0o600)
     return path
 
 
@@ -57,16 +58,8 @@ def npm_command() -> str:
 
 
 def candidate_code_commands() -> list[Path]:
-    candidates: list[Path] = []
-    which = shutil.which("code")
-    if which:
-        candidates.append(Path(which))
-    candidates.extend([
-        VSCODE_APP_CODE,
-        Path("/usr/local/bin/code"),
-        Path("/opt/homebrew/bin/code"),
-        USER_BIN / "code",
-    ])
+    candidates = candidate_editor_commands("vscode")
+    candidates.append(USER_BIN / ("code.cmd" if is_windows() else "code"))
     # Preserve order while dropping duplicates.
     unique: list[Path] = []
     seen: set[str] = set()
@@ -100,7 +93,7 @@ def is_usable_code_command(command: Path) -> bool:
 
 
 def resolve_code_command(explicit: Path | None = None) -> Path:
-    """Locate a usable VS Code CLI, preferring PATH then the macOS app bundle."""
+    """Locate a usable VS Code CLI, preferring PATH then native install paths."""
     ordered: list[Path] = []
     if explicit is not None:
         ordered.append(explicit)
@@ -119,8 +112,7 @@ def resolve_code_command(explicit: Path | None = None) -> Path:
                 return Path(which).resolve()
     raise RuntimeError(
         "未找到可用的 VS Code CLI。\n"
-        "请先安装 macOS 版 Visual Studio Code，或在 VS Code 中执行：\n"
-        "  Shell Command: Install 'code' command in PATH"
+        "请先安装 Visual Studio Code Desktop，或将 code 命令加入 PATH。"
     )
 
 
@@ -130,7 +122,7 @@ def ensure_user_code_shim(code_command: Path) -> Path | None:
     Never overwrites an existing unrelated file/symlink. Returns the shim path when
     created or already correctly linked; otherwise None.
     """
-    if shutil.which("code"):
+    if is_windows() or shutil.which("code"):
         return None
     target = code_command.expanduser().resolve()
     if not target.is_file():
@@ -206,7 +198,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--no-path-shim",
         action="store_true",
-        help="不在 ~/.local/bin 创建 code 软链",
+        help="不在 ~/.local/bin 创建 code 软链（仅 macOS/Linux）",
     )
     return parser.parse_args(argv)
 
@@ -229,10 +221,13 @@ def main(argv: list[str] | None = None) -> int:
             if shim is not None:
                 print(f"已配置用户 PATH 命令：{shim}")
             elif not shutil.which("code"):
-                print(
-                    "提示：当前 shell 仍找不到 code。"
-                    "可重新打开终端，或确认 ~/.local/bin 已在 PATH 中。"
-                )
+                if is_windows():
+                    print("提示：当前 shell 仍找不到 code，但 Easy CR 已记录并使用安装路径。")
+                else:
+                    print(
+                        "提示：当前 shell 仍找不到 code。"
+                        "可重新打开终端，或确认 ~/.local/bin 已在 PATH 中。"
+                    )
             print(f"本机 token：{token}")
             print("请手动重启 VS Code 一次使新扩展生效。")
             return 0

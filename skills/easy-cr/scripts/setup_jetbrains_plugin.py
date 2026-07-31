@@ -12,15 +12,34 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from easy_cr_config import CONFIG_DIR
+from easy_cr_config import CONFIG_DIR, candidate_editor_commands
+from platform_support import apply_permissions, is_windows
 
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 PLUGIN_SOURCE = SKILL_DIR / "assets" / "jetbrains-plugin"
-JETBRAINS_SUPPORT_ROOT = Path.home() / "Library" / "Application Support" / "JetBrains"
+
+
+def jetbrains_support_root(
+    *,
+    home: Path | None = None,
+    environ: Mapping[str, str] | None = None,
+    platform: str | None = None,
+) -> Path:
+    values = os.environ if environ is None else environ
+    resolved_home = (home or Path.home()).expanduser()
+    if is_windows(platform):
+        app_data = values.get("APPDATA")
+        base = Path(app_data) if app_data else resolved_home / "AppData" / "Roaming"
+        return base / "JetBrains"
+    return resolved_home / "Library" / "Application Support" / "JetBrains"
+
+
+JETBRAINS_SUPPORT_ROOT = jetbrains_support_root()
 
 
 @dataclass(frozen=True)
@@ -67,13 +86,43 @@ def jetbrains_editor(editor: str) -> JetBrainsEditor:
 
 def app_data_directory_name(app: Path) -> str | None:
     """Read the live IDE config directory name from product-info.json."""
-    product_info = app / "Contents" / "Resources" / "product-info.json"
-    try:
-        payload = json.loads(product_info.read_text())
-    except (OSError, json.JSONDecodeError):
+    for product_info in (
+        app / "product-info.json",
+        app / "Contents" / "Resources" / "product-info.json",
+    ):
+        try:
+            payload = json.loads(product_info.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        name = payload.get("dataDirectoryName")
+        if isinstance(name, str) and name:
+            return name
+    return None
+
+
+def find_jetbrains_app(editor: JetBrainsEditor) -> Path | None:
+    """Find an IDE installation root on macOS or Windows."""
+    candidates: list[Path] = []
+    for command in candidate_editor_commands(editor.editor):
+        if command.is_file() and command.parent.name.lower() == "bin":
+            candidates.append(command.parent.parent)
+    if editor.default_app.is_dir():
+        candidates.append(editor.default_app)
+    unique: dict[str, Path] = {}
+    for candidate in candidates:
+        unique.setdefault(os.path.normcase(str(candidate.resolve())), candidate.resolve())
+    valid = [
+        candidate
+        for candidate in unique.values()
+        if app_data_directory_name(candidate) is not None
+    ]
+    if not valid:
         return None
-    name = payload.get("dataDirectoryName")
-    return name if isinstance(name, str) and name else None
+    valid.sort(
+        key=lambda path: (path.stat().st_mtime, path.name),
+        reverse=True,
+    )
+    return valid[0]
 
 
 def plugins_dir_score(plugins_dir: Path) -> tuple[int, int, str]:
@@ -89,6 +138,8 @@ def plugins_dir_score(plugins_dir: Path) -> tuple[int, int, str]:
 def newest_plugins_dir(
     editor: JetBrainsEditor,
     app: Path | None = None,
+    *,
+    support_root: Path | None = None,
 ) -> Path:
     """Resolve the plugins directory for the IDE that will actually load the plugin.
 
@@ -98,18 +149,19 @@ def newest_plugins_dir(
     3. Lexicographically newest matching dir
     4. Built-in fallback version dir
     """
-    app = app or editor.default_app
+    app = app or find_jetbrains_app(editor) or editor.default_app
+    root = support_root or JETBRAINS_SUPPORT_ROOT
     data_name = app_data_directory_name(app)
     if data_name:
-        return JETBRAINS_SUPPORT_ROOT / data_name / "plugins"
+        return root / data_name / "plugins"
 
     candidates = list(
-        JETBRAINS_SUPPORT_ROOT.glob(f"{editor.app_support_pattern}/plugins")
+        root.glob(f"{editor.app_support_pattern}/plugins")
     )
     if candidates:
         candidates.sort(key=plugins_dir_score, reverse=True)
         return candidates[0]
-    return JETBRAINS_SUPPORT_ROOT / editor.fallback_version_dir / "plugins"
+    return root / editor.fallback_version_dir / "plugins"
 
 
 def run(command: list[str]) -> None:
@@ -119,9 +171,15 @@ def run(command: list[str]) -> None:
 
 
 def build_plugin(editor: JetBrainsEditor, app: Path, output: Path) -> Path:
-    java_home = app / "Contents" / "jbr" / "Contents" / "Home"
-    javac = java_home / "bin" / "javac"
-    java = java_home / "bin" / "java"
+    if (app / "Contents" / "jbr" / "Contents" / "Home").is_dir():
+        java_home = app / "Contents" / "jbr" / "Contents" / "Home"
+        lib_root = app / "Contents" / "lib"
+    else:
+        java_home = app / "jbr"
+        lib_root = app / "lib"
+    executable_suffix = ".exe" if is_windows() else ""
+    javac = java_home / "bin" / f"javac{executable_suffix}"
+    java = java_home / "bin" / f"java{executable_suffix}"
     if not javac.is_file() or not java.is_file():
         raise RuntimeError(f"{editor.display_name} JBR tools are missing under {app}")
     sources = sorted((PLUGIN_SOURCE / "src").rglob("*.java"))
@@ -129,7 +187,7 @@ def build_plugin(editor: JetBrainsEditor, app: Path, output: Path) -> Path:
         raise RuntimeError("JetBrains extension sources are missing")
     classes = output / "classes"
     classes.mkdir(parents=True)
-    classpath = str(app / "Contents" / "lib" / "*")
+    classpath = str(lib_root / "*")
     run([
         str(javac),
         "--add-modules",
@@ -174,7 +232,8 @@ def build_plugin(editor: JetBrainsEditor, app: Path, output: Path) -> Path:
             f"port={editor.port}",
             f"tokenFile={editor.token_file}",
             "",
-        ])
+        ]),
+        encoding="utf-8",
     )
     plugin_jar = output / "easy-cr.jar"
     with zipfile.ZipFile(plugin_jar, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -205,12 +264,12 @@ def install(plugin_jar: Path, plugins_dir: Path) -> Path:
 def ensure_token(path: Path) -> Path:
     path = path.expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.parent.chmod(0o700)
+    apply_permissions(path.parent, 0o700)
     if not path.exists():
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w") as stream:
             stream.write(secrets.token_urlsafe(32))
-    path.chmod(0o600)
+    apply_permissions(path, 0o600)
     return path
 
 
@@ -232,7 +291,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     args.resolved_editor = jetbrains_editor(args.editor)
     if args.app is None:
-        args.app = args.resolved_editor.default_app
+        args.app = find_jetbrains_app(args.resolved_editor) or args.resolved_editor.default_app
     if args.plugins_dir is None:
         args.plugins_dir = newest_plugins_dir(args.resolved_editor, args.app)
     if args.token_file is None:

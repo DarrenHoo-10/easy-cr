@@ -1,6 +1,6 @@
 {
   "name": "easy-cr",
-  "version": "1.4.3+codex.20260730121119",
+  "version": "1.5.0+codex.20260731205239",
   "description": "Generate guided, multi-repository HTML code reviews with portable human comments and optional GoLand, IntelliJ IDEA, or VS Code navigation.",
   "author": {
     "name": "Bytedance"

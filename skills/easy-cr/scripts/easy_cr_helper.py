@@ -31,28 +31,46 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from review_comments import extract_comments, replace_comments_block
+from easy_cr_config import CONFIG_DIR
+from platform_support import (
+    apply_permissions,
+    private_permissions_ok,
+    windows_startup_dir,
+)
 
 
 HELPER_HOST = "127.0.0.1"
 HELPER_PORT = 64346
 HELPER_ENDPOINT = f"http://{HELPER_HOST}:{HELPER_PORT}"
 HELPER_LABEL = "com.bytedance.easy-cr.helper"
-CONFIG_DIR = Path.home() / ".config" / "easy-cr"
 MASTER_TOKEN_PATH = CONFIG_DIR / "helper-token"
 REGISTRY_PATH = CONFIG_DIR / "helper-reports.json"
 LOG_DIR = CONFIG_DIR / "logs"
 LAUNCH_AGENT_PATH = (
-    Path.home()
-    / "Library"
-    / "LaunchAgents"
-    / f"{HELPER_LABEL}.plist"
+    windows_startup_dir() / "easy-cr-helper.cmd"
+    if os.name == "nt"
+    else Path.home() / "Library" / "LaunchAgents" / f"{HELPER_LABEL}.plist"
 )
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
 CODEX_APP_COMMAND = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
 CODEX_IPC_SOCKET = Path.home() / ".codex" / "ipc" / "ipc.sock"
+CODEX_IPC_PIPE = r"\\.\pipe\codex-ipc"
 CODEX_IPC_REQUEST_VERSION = 1
 CODEX_IPC_TIMEOUT_SECONDS = 3.0
 CODEX_CLIENT_OPEN_SETTLE_SECONDS = 1.0
+
+
+def _silent_process_options() -> dict[str, Any]:
+    """Keep short-lived Agent workers invisible on Windows."""
+    if os.name != "nt":
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = subprocess.SW_HIDE
+    return {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        "startupinfo": startupinfo,
+    }
 
 
 class ConflictError(ValueError):
@@ -71,9 +89,9 @@ def _atomic_write(path: Path, content: bytes, mode: int = 0o600) -> None:
             stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
-        temporary.chmod(mode)
+        apply_permissions(temporary, mode)
         os.replace(temporary, path)
-        path.chmod(mode)
+        apply_permissions(path, mode)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -88,15 +106,15 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 def ensure_master_token(path: Path = MASTER_TOKEN_PATH) -> str:
     path = path.expanduser()
     try:
-        token = path.read_text().strip()
+        token = path.read_text(encoding="utf-8").strip()
         if len(token) < 32:
             raise ValueError("Easy CR helper token 格式无效")
-        if stat.S_IMODE(path.stat().st_mode) != 0o600:
-            path.chmod(0o600)
+        if not private_permissions_ok(path):
+            apply_permissions(path, 0o600)
         return token
     except FileNotFoundError:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.parent.chmod(0o700)
+        apply_permissions(path.parent, 0o700)
         token = secrets.token_urlsafe(32)
         _atomic_write(path, (token + "\n").encode())
         return token
@@ -152,6 +170,80 @@ def _kickstart_helper(launch_agent_path: Path) -> None:
         _run_launchctl(["kickstart", "-k", target])
 
 
+def _windows_python(python: Path) -> Path:
+    if python.name.lower() == "python.exe":
+        pythonw = python.with_name("pythonw.exe")
+        if pythonw.is_file():
+            return pythonw
+    return python
+
+
+def windows_startup_script(
+    python: Path,
+    helper_script: Path,
+    token_path: Path,
+) -> str:
+    command = subprocess.list2cmdline([
+        str(_windows_python(python)),
+        "-X",
+        "utf8",
+        str(helper_script),
+        "serve",
+        "--host",
+        HELPER_HOST,
+        "--port",
+        str(HELPER_PORT),
+        "--token-file",
+        str(token_path),
+    ])
+    return "\r\n".join([
+        "@echo off",
+        "chcp 65001 >nul",
+        f'start "" /b {command}',
+        "",
+    ])
+
+
+def _start_windows_helper(
+    python: Path,
+    helper_script: Path,
+    token_path: Path,
+) -> None:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    arguments = [
+        str(_windows_python(python)),
+        "-X",
+        "utf8",
+        str(helper_script),
+        "serve",
+        "--host",
+        HELPER_HOST,
+        "--port",
+        str(HELPER_PORT),
+        "--token-file",
+        str(token_path),
+    ]
+    stdout = (LOG_DIR / "helper.stdout.log").open("ab")
+    stderr = (LOG_DIR / "helper.stderr.log").open("ab")
+    flags = (
+        getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        | getattr(subprocess, "DETACHED_PROCESS", 0)
+        | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    )
+    try:
+        subprocess.Popen(
+            arguments,
+            stdin=subprocess.DEVNULL,
+            stdout=stdout,
+            stderr=stderr,
+            close_fds=True,
+            creationflags=flags,
+        )
+    finally:
+        stdout.close()
+        stderr.close()
+
+
 def install_helper_service(
     *,
     launch_agent_path: Path = LAUNCH_AGENT_PATH,
@@ -159,8 +251,18 @@ def install_helper_service(
     python: Path = Path(sys.executable),
     helper_script: Path = Path(__file__).resolve(),
 ) -> Path:
-    ensure_master_token(token_path)
+    token = ensure_master_token(token_path)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        serialized = windows_startup_script(python, helper_script, token_path).encode(
+            "utf-8-sig"
+        )
+        current = launch_agent_path.read_bytes() if launch_agent_path.is_file() else None
+        if current != serialized:
+            _atomic_write(launch_agent_path, serialized, mode=0o600)
+        if not helper_health(token):
+            _start_windows_helper(python, helper_script, token_path)
+        return launch_agent_path
     payload = launch_agent_payload(python, helper_script, token_path)
     serialized = plistlib.dumps(payload, fmt=plistlib.FMT_XML)
     current = launch_agent_path.read_bytes() if launch_agent_path.is_file() else None
@@ -206,6 +308,8 @@ def ensure_helper_running(
             launch_agent_path=launch_agent_path,
             token_path=token_path,
         )
+    elif os.name == "nt":
+        _start_windows_helper(Path(sys.executable), Path(__file__).resolve(), token_path)
     else:
         _kickstart_helper(launch_agent_path)
     for _ in range(20):
@@ -277,6 +381,8 @@ def prepare_report_helper(
     endpoint: str = HELPER_ENDPOINT,
     token_path: Path = MASTER_TOKEN_PATH,
 ) -> dict[str, Any]:
+    if os.environ.get("EASY_CR_DISABLE_HELPER") == "1":
+        raise RuntimeError("Easy CR helper 已在测试环境中禁用")
     report_path = report_path.expanduser().resolve()
     if report_path.suffix.lower() not in {".html", ".htm"}:
         raise ValueError("Easy CR helper 只支持 HTML 报告")
@@ -568,6 +674,7 @@ def _codex_app_server_explainer(
         stderr=subprocess.DEVNULL,
         text=True,
         bufsize=1,
+        **_silent_process_options(),
     )
     emitted = False
     completed_answer = ""
@@ -763,6 +870,7 @@ def _default_explainer(
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            **_silent_process_options(),
         )
     except Exception:
         if created_session:
@@ -803,16 +911,28 @@ def _default_explainer(
             process.kill()
 
 
-def _write_ipc_frame(connection: socket.socket, payload: dict[str, Any]) -> None:
+def _write_ipc_frame(connection: Any, payload: dict[str, Any]) -> None:
     encoded = json.dumps(payload, ensure_ascii=False).encode()
-    connection.sendall(struct.pack("<I", len(encoded)) + encoded)
+    frame = struct.pack("<I", len(encoded)) + encoded
+    sender = getattr(connection, "sendall", None)
+    if callable(sender):
+        sender(frame)
+        return
+    written = connection.write(frame)
+    if written is not None and written != len(frame):
+        raise RuntimeError("Codex Desktop IPC 消息写入不完整")
+    flush = getattr(connection, "flush", None)
+    if callable(flush):
+        flush()
 
 
-def _read_ipc_exact(connection: socket.socket, size: int) -> bytes:
+def _read_ipc_exact(connection: Any, size: int) -> bytes:
     chunks: list[bytes] = []
     remaining = size
+    receiver = getattr(connection, "recv", None)
+    reader = receiver if callable(receiver) else connection.read
     while remaining:
-        chunk = connection.recv(remaining)
+        chunk = reader(remaining)
         if not chunk:
             raise RuntimeError("Codex Desktop IPC 连接已关闭")
         chunks.append(chunk)
@@ -820,7 +940,7 @@ def _read_ipc_exact(connection: socket.socket, size: int) -> bytes:
     return b"".join(chunks)
 
 
-def _read_ipc_frame(connection: socket.socket) -> dict[str, Any]:
+def _read_ipc_frame(connection: Any) -> dict[str, Any]:
     size = struct.unpack("<I", _read_ipc_exact(connection, 4))[0]
     if size <= 0 or size > MAX_REQUEST_BYTES:
         raise RuntimeError("Codex Desktop IPC 返回了无效消息")
@@ -831,7 +951,7 @@ def _read_ipc_frame(connection: socket.socket) -> dict[str, Any]:
 
 
 def _wait_ipc_response(
-    connection: socket.socket,
+    connection: Any,
     request_id: str,
 ) -> dict[str, Any]:
     while True:
@@ -855,60 +975,86 @@ def _wait_ipc_response(
         return payload
 
 
+def _submit_codex_turn_on_connection(
+    connection: Any,
+    conversation_id: str,
+    prompt: str,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    initialize_id = str(uuid.uuid4())
+    _write_ipc_frame(
+        connection,
+        {
+            "type": "request",
+            "requestId": initialize_id,
+            "method": "initialize",
+            "params": {"clientType": "easy-cr"},
+        },
+    )
+    initialized = _wait_ipc_response(connection, initialize_id)
+    client_id = str(
+        (initialized.get("result") or {}).get("clientId") or ""
+    )
+    if not client_id:
+        raise RuntimeError("Codex Desktop IPC 初始化失败")
+    request_id = str(uuid.uuid4())
+    _write_ipc_frame(
+        connection,
+        {
+            "type": "request",
+            "requestId": request_id,
+            "sourceClientId": client_id,
+            "version": CODEX_IPC_REQUEST_VERSION,
+            "method": "thread-follower-start-turn",
+            "params": {
+                "conversationId": conversation_id,
+                "turnStartParams": {
+                    "input": [{"type": "text", "text": prompt}],
+                    "clientUserMessageId": str(uuid.uuid4()),
+                },
+            },
+            "timeoutMs": int(timeout_seconds * 1000),
+        },
+    )
+    return _wait_ipc_response(connection, request_id)
+
+
 def submit_codex_turn(
     session_id: str,
     prompt: str,
     *,
     socket_path: Path = CODEX_IPC_SOCKET,
+    pipe_path: str = CODEX_IPC_PIPE,
     timeout_seconds: float = CODEX_IPC_TIMEOUT_SECONDS,
+    platform_name: str | None = None,
 ) -> dict[str, Any]:
     try:
         conversation_id = str(uuid.UUID(str(session_id)))
     except (ValueError, AttributeError, TypeError) as error:
         raise ValueError("Codex sessionId 不是有效 UUID") from error
-    socket_path = socket_path.expanduser()
-    if not socket_path.is_socket():
-        raise RuntimeError("Codex Desktop IPC 不可用，请先打开绑定报告的 Codex 会话")
     try:
+        if (platform_name or os.name) == "nt":
+            with open(pipe_path, "r+b", buffering=0) as connection:
+                return _submit_codex_turn_on_connection(
+                    connection,
+                    conversation_id,
+                    prompt,
+                    timeout_seconds,
+                )
+        socket_path = socket_path.expanduser()
+        if not socket_path.is_socket():
+            raise RuntimeError(
+                "Codex Desktop IPC 不可用，请先打开绑定报告的 Codex 会话"
+            )
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
             connection.settimeout(timeout_seconds)
             connection.connect(str(socket_path))
-            initialize_id = str(uuid.uuid4())
-            _write_ipc_frame(
+            return _submit_codex_turn_on_connection(
                 connection,
-                {
-                    "type": "request",
-                    "requestId": initialize_id,
-                    "method": "initialize",
-                    "params": {"clientType": "easy-cr"},
-                },
+                conversation_id,
+                prompt,
+                timeout_seconds,
             )
-            initialized = _wait_ipc_response(connection, initialize_id)
-            client_id = str(
-                (initialized.get("result") or {}).get("clientId") or ""
-            )
-            if not client_id:
-                raise RuntimeError("Codex Desktop IPC 初始化失败")
-            request_id = str(uuid.uuid4())
-            _write_ipc_frame(
-                connection,
-                {
-                    "type": "request",
-                    "requestId": request_id,
-                    "sourceClientId": client_id,
-                    "version": CODEX_IPC_REQUEST_VERSION,
-                    "method": "thread-follower-start-turn",
-                    "params": {
-                        "conversationId": conversation_id,
-                        "turnStartParams": {
-                            "input": [{"type": "text", "text": prompt}],
-                            "clientUserMessageId": str(uuid.uuid4()),
-                        },
-                    },
-                    "timeoutMs": int(timeout_seconds * 1000),
-                },
-            )
-            return _wait_ipc_response(connection, request_id)
     except (OSError, socket.timeout) as error:
         raise RuntimeError(f"Codex Desktop 当前会话提交失败：{error}") from error
 
@@ -925,17 +1071,25 @@ def _default_client_opener(agent: dict[str, Any]) -> bool:
     if agent.get("client") != "codex":
         return False
     target = codex_thread_url(str(agent.get("sessionId") or ""))
-    result = subprocess.run(
-        ["/usr/bin/open", target],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode:
-        detail = result.stderr.strip() or result.stdout.strip() or "无法打开 Codex 原任务"
-        raise RuntimeError(detail)
+    if os.name == "nt":
+        os.startfile(target)
+    else:
+        result = subprocess.run(
+            ["/usr/bin/open", target],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode:
+            detail = result.stderr.strip() or result.stdout.strip() or "无法打开 Codex 原任务"
+            raise RuntimeError(detail)
     time.sleep(CODEX_CLIENT_OPEN_SETTLE_SECONDS)
     return True
+
+
+def _codex_cli_fallback_allowed() -> bool:
+    """Windows must use Desktop IPC so Agent tools never create console windows."""
+    return os.name != "nt"
 
 
 def _default_launcher(agent: dict[str, Any], report_path: Path) -> None:
@@ -950,7 +1104,8 @@ def _default_launcher(agent: dict[str, Any], report_path: Path) -> None:
             # Some Codex Desktop builds expose the IPC router without an owner
             # window that can accept thread-follower requests. Resume through
             # the official CLI so the same session still receives the batch.
-            pass
+            if not _codex_cli_fallback_allowed():
+                raise
     cwd = Path(str(agent.get("cwd") or report_path.parent)).resolve()
     arguments = agent_command(agent, report_path)
     if not Path(arguments[0]).is_file():
@@ -959,14 +1114,21 @@ def _default_launcher(agent: dict[str, Any], report_path: Path) -> None:
     log_name = hashlib.sha256(str(report_path).encode()).hexdigest()[:12]
     log = (LOG_DIR / f"review-{log_name}.log").open("ab")
     try:
-        subprocess.Popen(
-            arguments,
-            cwd=cwd,
-            stdin=subprocess.DEVNULL,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
+        options: dict[str, Any] = {
+            "cwd": cwd,
+            "stdin": subprocess.DEVNULL,
+            "stdout": log,
+            "stderr": subprocess.STDOUT,
+        }
+        if os.name == "nt":
+            options["creationflags"] = (
+                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                | getattr(subprocess, "DETACHED_PROCESS", 0)
+                | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            )
+        else:
+            options["start_new_session"] = True
+        subprocess.Popen(arguments, **options)
     finally:
         log.close()
 
@@ -994,7 +1156,7 @@ class HelperStore:
 
     def _load(self) -> dict[str, Any]:
         try:
-            payload = json.loads(self.registry_path.read_text())
+            payload = json.loads(self.registry_path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return {
                 "version": 1,
@@ -1121,7 +1283,7 @@ class HelperStore:
             registry = self._load()
             entry = self._entry(registry, report_id, token)
             path = Path(entry["path"]).resolve()
-            source = path.read_text()
+            source = path.read_text(encoding="utf-8")
             current = extract_comments(source)
             if current["reportId"] != report_id:
                 raise ValueError("报告内嵌 reportId 不匹配")
@@ -1149,7 +1311,7 @@ class HelperStore:
             registry = self._load()
             entry = self._entry(registry, report_id, token)
             path = Path(entry["path"]).resolve()
-            payload = extract_comments(path.read_text())
+            payload = extract_comments(path.read_text(encoding="utf-8"))
             if payload["reportId"] != report_id:
                 raise ValueError("报告内嵌 reportId 不匹配")
             return payload
@@ -1286,7 +1448,7 @@ class HelperStore:
             registry = self._load()
             entry = self._entry(registry, report_id, token)
             path = Path(entry["path"]).resolve()
-            source = path.read_text()
+            source = path.read_text(encoding="utf-8")
             embedded = extract_comments(source)
             if int(embedded.get("revision") or 0) != int(revision):
                 raise ConflictError("评论尚未全部写入当前 HTML")
