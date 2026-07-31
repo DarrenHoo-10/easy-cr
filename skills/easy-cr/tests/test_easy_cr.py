@@ -61,6 +61,9 @@ class PluginManifestTest(unittest.TestCase):
     def test_codex_and_claude_manifests_share_easy_cr_skill(self):
         package = json.loads((PLUGIN_DIR / "package.json").read_text())
         codex = json.loads((PLUGIN_DIR / ".codex-plugin" / "plugin.json").read_text())
+        codex_marketplace = json.loads(
+            (PLUGIN_DIR / ".agents" / "plugins" / "marketplace.json").read_text()
+        )
         claude = json.loads((PLUGIN_DIR / ".claude-plugin" / "plugin.json").read_text())
         marketplace = json.loads((PLUGIN_DIR / ".claude-plugin" / "marketplace.json").read_text())
 
@@ -68,6 +71,13 @@ class PluginManifestTest(unittest.TestCase):
         self.assertEqual(package["bin"], {"easy-cr": "bin/easy-cr"})
         self.assertEqual(codex["name"], "easy-cr")
         self.assertEqual(codex["skills"], "./skills/")
+        self.assertEqual(codex_marketplace["name"], "easy-cr")
+        self.assertEqual(codex_marketplace["plugins"][0]["name"], "easy-cr")
+        self.assertEqual(
+            codex_marketplace["plugins"][0]["source"],
+            {"source": "local", "path": "./"},
+        )
+        self.assertIn(".agents/plugins/marketplace.json", package["files"])
         self.assertEqual(claude["name"], "easy-cr")
         self.assertEqual(marketplace["plugins"][0]["name"], "easy-cr")
         self.assertEqual(marketplace["plugins"][0]["source"], "./")
@@ -963,38 +973,97 @@ class CliTest(unittest.TestCase):
         self.assertEqual(detected["codex"], app_codex)
         self.assertIsNone(detected["claude"])
 
-    def test_codex_marketplace_upsert_preserves_other_plugins(self):
+    def test_configure_codex_registers_package_marketplace_outside_home(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             home = root / "home"
-            repo = home / "GolandProjects" / "easy-cr"
+            repo = root / "opt" / "homebrew" / "lib" / "node_modules" / "easy-cr"
+            repo.mkdir(parents=True)
             marketplace = home / ".agents" / "plugins" / "marketplace.json"
             marketplace.parent.mkdir(parents=True)
             marketplace.write_text(json.dumps({
                 "name": "personal",
                 "interface": {"displayName": "Personal"},
-                "plugins": [{
-                    "name": "other",
-                    "source": {"source": "local", "path": "./plugins/other"},
-                    "policy": {
-                        "installation": "AVAILABLE",
-                        "authentication": "ON_INSTALL",
+                "plugins": [
+                    {
+                        "name": "other",
+                        "source": {"source": "local", "path": "./plugins/other"},
+                        "policy": {
+                            "installation": "AVAILABLE",
+                            "authentication": "ON_INSTALL",
+                        },
+                        "category": "Productivity",
                     },
-                    "category": "Productivity",
-                }],
+                    {
+                        "name": "easy-cr",
+                        "source": {"source": "local", "path": str(repo)},
+                        "policy": {
+                            "installation": "AVAILABLE",
+                            "authentication": "ON_INSTALL",
+                        },
+                        "category": "Productivity",
+                    },
+                ],
             }))
 
-            changed = easy_cr_cli.upsert_codex_marketplace(repo, marketplace, home)
-            unchanged = easy_cr_cli.upsert_codex_marketplace(repo, marketplace, home)
+            command = Path("/opt/homebrew/bin/codex")
+            with mock.patch.object(
+                easy_cr_cli,
+                "codex_marketplace_path",
+                return_value=None,
+            ):
+                with mock.patch.object(easy_cr_cli, "run") as run:
+                    easy_cr_cli.configure_codex(command, repo, home)
             payload = json.loads(marketplace.read_text())
 
-        self.assertTrue(changed)
-        self.assertFalse(unchanged)
-        self.assertEqual([item["name"] for item in payload["plugins"]], ["other", "easy-cr"])
-        self.assertEqual(
-            payload["plugins"][1]["source"]["path"],
-            "./GolandProjects/easy-cr",
+        self.assertEqual([item["name"] for item in payload["plugins"]], ["other"])
+        self.assertIn(
+            mock.call([
+                str(command),
+                "plugin",
+                "marketplace",
+                "add",
+                str(repo.resolve()),
+            ]),
+            run.call_args_list,
         )
+        self.assertIn(
+            mock.call([str(command), "plugin", "add", "easy-cr@easy-cr"]),
+            run.call_args_list,
+        )
+        self.assertIn(
+            mock.call(
+                [str(command), "plugin", "remove", "easy-cr@personal"],
+                allow_failure=True,
+            ),
+            run.call_args_list,
+        )
+
+    def test_codex_marketplace_path_reads_registered_root(self):
+        command = Path("/opt/homebrew/bin/codex")
+        repo = "/opt/homebrew/lib/node_modules/easy-cr"
+        result = subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps({
+                "marketplaces": [
+                    {"name": "personal", "root": "/Users/example"},
+                    {
+                        "name": "easy-cr",
+                        "root": repo,
+                        "marketplaceSource": {
+                            "sourceType": "local",
+                            "source": repo,
+                        },
+                    },
+                ],
+            }),
+            stderr="",
+        )
+        with mock.patch.object(easy_cr_cli, "run", return_value=result):
+            configured = easy_cr_cli.codex_marketplace_path(command)
+
+        self.assertEqual(configured, repo)
 
     def test_status_payload_never_exposes_token(self):
         with tempfile.TemporaryDirectory() as temp:

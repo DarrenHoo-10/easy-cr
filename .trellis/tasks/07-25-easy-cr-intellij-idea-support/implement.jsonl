@@ -1,4 +1,0 @@
-{"file": ".trellis/tasks/07-24-easy-cr-idea-vscode-support/prd.md", "reason": "父任务的多编辑器总体需求与兼容边界。"}
-{"file": ".trellis/tasks/07-24-easy-cr-idea-vscode-support/design.md", "reason": "父任务定义的统一协议、端口和安全模型。"}
-{"file": ".trellis/tasks/07-25-easy-cr-intellij-idea-support/prd.md", "reason": "IDEA 子任务的需求和验收标准。"}
-{"file": ".trellis/tasks/07-25-easy-cr-intellij-idea-support/design.md", "reason": "JetBrains Adapter 的实施架构和技术决策。"}
