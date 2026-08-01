@@ -117,6 +117,19 @@ class PluginManifestTest(unittest.TestCase):
         self.assertIn("低置信度时优先合并", schema)
         self.assertNotIn("Use “补充其他改动”", skill)
 
+    def test_skill_requires_an_explicit_report_generation_request(self):
+        skill = (SKILL_DIR / "SKILL.md").read_text()
+        frontmatter = skill.split("---", 2)[1]
+        interface = (SKILL_DIR / "agents" / "openai.yaml").read_text()
+
+        self.assertIn("Use only when the user explicitly asks", frontmatter)
+        self.assertIn("Do not invoke for ordinary code review", frontmatter)
+        self.assertNotIn("asks to configure the editor", frontmatter)
+        self.assertIn("## Invocation gate", skill)
+        self.assertIn("Merely mentioning Easy CR", skill)
+        self.assertIn("Do not use this skill for standalone configuration requests", skill)
+        self.assertIn("$easy-cr", interface)
+
 
 class ConfigurationTest(unittest.TestCase):
     def test_missing_configuration_requests_one_time_choice(self):

@@ -1,11 +1,20 @@
 ---
 name: easy-cr
-description: Generate an interactive HTML code review organized from top to bottom by business timeline, with comments, replies, themes, filtering, and optional GoLand/IntelliJ IDEA/VS Code semantic references and navigation. Use when the user wants an easy-to-read CR artifact, wants to review a branch or commit in HTML, or asks to configure the editor used by Easy CR.
+description: Generate or regenerate a self-contained interactive Easy CR HTML code review report organized by business timeline. Use only when the user explicitly asks to generate, create, render, or regenerate a CR report, code review report, Easy CR HTML, or review.html artifact. Do not invoke for ordinary code review, code analysis, diff analysis, architecture analysis, implementation, optimization, debugging, discussion about Easy CR, or editor and configuration requests unless the same request explicitly asks for report generation.
 ---
 
 # Easy CR
 
 Generate one self-contained HTML review. Start from technical-plan chapters, then explain each chapter in business execution order. Put pre-generated explanations beside the smallest complete code unit needed to understand each step.
+
+## Invocation gate
+
+Proceed only when the current user request explicitly asks to generate or
+regenerate a CR report artifact. Merely mentioning Easy CR, asking to review or
+analyze code, discussing how code should be split, changing Easy CR itself, or
+requesting standalone editor/configuration work does not satisfy this gate. If
+the request does not satisfy the gate, do not use this skill; handle it with the
+general code-analysis, review, configuration, or implementation workflow instead.
 
 ## Smallest complete code unit
 
@@ -113,7 +122,7 @@ When `editor.configured` is `null`, ask once:
 - If declined or deferred, run `easy-cr config editor none`.
 - Do not ask again after either choice is stored.
 
-When `easy-cr` is not installed yet, run the bundled cross-platform Python launcher with `node "${SKILL_DIR}/../../scripts/python-runner.js" "${SKILL_DIR}/../../scripts/install_cli.py"` from the plugin source root or use the internal `configure.py` fallback. When the user explicitly asks to view, initialize, diagnose, or change configuration, use `easy-cr status`, `easy-cr init`, `easy-cr doctor`, or `easy-cr config editor`.
+When `easy-cr` is not installed yet, run the bundled cross-platform Python launcher with `node "${SKILL_DIR}/../../scripts/python-runner.js" "${SKILL_DIR}/../../scripts/install_cli.py"` from the plugin source root or use the internal `configure.py` fallback. During an explicitly requested report-generation workflow, use `easy-cr status`, `easy-cr init`, `easy-cr doctor`, or `easy-cr config editor` only when setup or diagnosis is required. Do not use this skill for standalone configuration requests.
 
 ## Review workflow
 
