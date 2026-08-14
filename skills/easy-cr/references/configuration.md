@@ -1,6 +1,6 @@
 # Editor configuration
 
-Easy CR uses one global configuration shared by Codex and Claude Code:
+Easy CR uses one global configuration shared by Codex, Claude Code, and DeepSeek Harness:
 
 ```text
 macOS/Linux: ~/.config/easy-cr/config.json
@@ -133,5 +133,5 @@ CLI health checks require matching `editor` and `protocolVersion`.
   - CLI: `easy-cr open` / `easy-cr doctor --launch` uses `open -a` on macOS and the discovered native executable on Windows.
   - HTML: Command+click (macOS) or Ctrl+click (Windows) connection failures open `launchUri` (for example `vscode://file...`) and retry health/API for a short window while the extension loads.
 - Launching the app is best-effort. Semantic references still require the Easy CR extension to finish loading in an opened local workspace.
-- `init` automatically configures installed Codex and Claude Code clients. In automation, use `--non-interactive` together with an explicit `--editor`; repeat `--client` to constrain the clients being configured.
+- `init` automatically configures installed Codex, Claude Code, and DeepSeek Harness clients. `--client dsh` installs the persistent `dsh-easy-cr` bundle into the `web` profile (`dsh plugin --profile web add ./packages/dsh-easy-cr`); it does not copy a skill into `~/.dsh/skills`. Restart `dsh web` after install. In automation, use `--non-interactive` together with an explicit `--editor`; repeat `--client` to constrain the clients being configured.
 - The legacy `configure.py status/set` interface remains available for internal compatibility.

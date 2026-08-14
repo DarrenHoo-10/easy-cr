@@ -1,0 +1,31 @@
+{
+  "name": "dsh-easy-cr",
+  "version": "1.5.0",
+  "description": "Persistent DeepSeek Harness plugin for Easy CR: registers the review skill and /easy-cr command for the life of the dsh process.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "code-review",
+    "easy-cr"
+  ],
+  "license": "UNLICENSED",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

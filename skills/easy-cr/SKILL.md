@@ -1,6 +1,6 @@
 ---
 name: easy-cr
-description: Generate or regenerate a self-contained interactive Easy CR HTML code review report organized by business timeline. Use only when the user explicitly asks to generate, create, render, or regenerate a CR report, code review report, Easy CR HTML, or review.html artifact. Do not invoke for ordinary code review, code analysis, diff analysis, architecture analysis, implementation, optimization, debugging, discussion about Easy CR, or editor and configuration requests unless the same request explicitly asks for report generation.
+description: Generate or regenerate a self-contained interactive Easy CR HTML code review report organized by business timeline. Use only when the user explicitly asks to generate, create, render, or regenerate a CR report, code review report, Easy CR HTML, or review.html artifact, or types /easy-cr with or without extra words to generate that report. Do not invoke for ordinary code review, code analysis, diff analysis, architecture analysis, implementation, optimization, debugging, discussion about Easy CR, or editor and configuration requests unless the same request explicitly asks for report generation.
 ---
 
 # Easy CR
@@ -122,11 +122,29 @@ When `editor.configured` is `null`, ask once:
 - If declined or deferred, run `easy-cr config editor none`.
 - Do not ask again after either choice is stored.
 
-When `easy-cr` is not installed yet, run the bundled cross-platform Python launcher with `node "${SKILL_DIR}/../../scripts/python-runner.js" "${SKILL_DIR}/../../scripts/install_cli.py"` from the plugin source root or use the internal `configure.py` fallback. During an explicitly requested report-generation workflow, use `easy-cr status`, `easy-cr init`, `easy-cr doctor`, or `easy-cr config editor` only when setup or diagnosis is required. Do not use this skill for standalone configuration requests.
+When `easy-cr` is not installed yet, prefer the global CLI after installing it. Otherwise resolve the bundled launcher against this skill's resource base directory (`skills/easy-cr`): run `node "<skill-base>/../../scripts/python-runner.js" "<skill-base>/../../scripts/install_cli.py"`, or use the internal `configure.py` fallback. DeepSeek Harness loads this skill from the persistent `dsh-easy-cr` plugin and reports that base directory in `<skill_resources>`; resolve relative scripts and references against it, and do not expect `${SKILL_DIR}` to be expanded. During an explicitly requested report-generation workflow, use `easy-cr status`, `easy-cr init`, `easy-cr doctor`, or `easy-cr config editor` only when setup or diagnosis is required. Do not use this skill for standalone configuration requests.
+
+## DeepSeek Harness environment
+
+When the current client is DeepSeek Harness, capture the live Web runtime **before writing the manifest or HTML**. Do not guess or scan ports.
+
+```bash
+# POSIX
+printf '%s\n' "${DSH_SESSION_ID-}" "${DSH_WEB_URL-}"
+
+# Windows PowerShell
+$env:DSH_SESSION_ID
+$env:DSH_WEB_URL
+```
+
+- `$DSH_SESSION_ID` is the session that generated the report.
+- `$DSH_WEB_URL` is the canonical local URL of the Web GUI serving that session, including the real port (`http://127.0.0.1:8080` if the host is on 8080).
+- If either value is empty, stop. Tell the user to generate the report from the DeepSeek Harness Web session that owns the work, or set `EASY_CR_DSH_ENDPOINT` to that exact URL. Do not invent `3080` or any other port.
+- The renderer records both values on the report. Later “发送评论给 AI” and “不懂就问” use only these prepared addresses.
 
 ## Review workflow
 
-1. Read repository instructions and inspect `git status`; preserve unrelated changes.
+1. Read repository instructions and inspect `git status`; preserve unrelated changes. When running in DeepSeek Harness, complete the environment check above first.
 2. Resolve the exact review range:
    - Use revisions named by the user.
    - For the latest commit, use `HEAD^` → `HEAD`.
@@ -157,9 +175,11 @@ When `easy-cr` is not installed yet, run the bundled cross-platform Python launc
 7. Render:
 
 ```bash
-node "${SKILL_DIR}/../../scripts/python-runner.js" "${SKILL_DIR}/scripts/build_review.py" \
+node "<skill-base>/../../scripts/python-runner.js" "<skill-base>/scripts/build_review.py" \
   --manifest /absolute/path/to/repo/.codex-artifacts/YYYY-MM-DD-技术方案名称/manifest.json
 ```
+
+Prefer the global `easy-cr` CLI when it is already on `PATH`. `<skill-base>` is this skill directory (`skills/easy-cr`). Claude Code may still expand `${SKILL_DIR}` to the same directory.
 
 The renderer defaults to `.codex-artifacts/YYYY-MM-DD-技术方案名称/review.html`. Pass
 `--output` only when regenerating a known historical path or supporting a legacy
@@ -171,7 +191,7 @@ workflow. For a legacy v1 manifest, also pass `--repo`, `--base`, and `--head`.
    - Business stages read smoothly from top to bottom.
    - Do not stage or commit review artifacts unless requested.
 9. Open the HTML and return a clickable absolute path.
-10. The report uses the single Easy CR helper at `127.0.0.1:64346` to persist comments into the current HTML. The top-right `发送评论给 AI` button sends only `pending` comments, marks them `processing`, and resumes the originating Codex/Claude session with the batch id.
+10. The report uses the single Easy CR helper at `127.0.0.1:64346` to persist comments into the current HTML. The top-right `发送评论给 AI` button sends only `pending` comments, marks them `processing`, and resumes the originating Codex, Claude, or DeepSeek Harness session with the batch id. DeepSeek Harness binding is prepared before render from `$DSH_SESSION_ID` and `$DSH_WEB_URL`; the helper never scans ports.
 11. When an Agent receives an Easy CR comment batch, run:
 
 ```bash
