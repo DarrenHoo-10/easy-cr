@@ -83,6 +83,8 @@ class PluginManifestTest(unittest.TestCase):
             {"source": "local", "path": "./"},
         )
         self.assertIn(".agents/plugins/marketplace.json", package["files"])
+        self.assertIn("packages/dsh-easy-cr/index.js", package["files"])
+        self.assertIn("packages/dsh-easy-cr/cordis.patch.yml", package["files"])
         self.assertEqual(claude["name"], "easy-cr")
         self.assertEqual(marketplace["plugins"][0]["name"], "easy-cr")
         self.assertEqual(marketplace["plugins"][0]["source"], "./")
@@ -93,11 +95,26 @@ class PluginManifestTest(unittest.TestCase):
         self.assertTrue((PLUGIN_DIR / "skills" / "easy-cr" / "SKILL.md").is_file())
         self.assertTrue((PLUGIN_DIR / "bin" / "easy-cr").is_file())
         self.assertTrue((PLUGIN_DIR / "bin" / "easy-cr.js").is_file())
+        dsh_manifest = json.loads(
+            (PLUGIN_DIR / "packages" / "dsh-easy-cr" / "package.json").read_text()
+        )
+        self.assertEqual(dsh_manifest["name"], "dsh-easy-cr")
+        self.assertEqual(dsh_manifest["dsh"]["bundle"]["patch"], "./cordis.patch.yml")
+        self.assertTrue((PLUGIN_DIR / "packages" / "dsh-easy-cr" / "index.js").is_file())
+        self.assertTrue(
+            (PLUGIN_DIR / "packages" / "dsh-easy-cr" / "cordis.patch.yml").is_file()
+        )
 
     def test_skill_gates_discussion_batches_before_code_changes(self):
         skill = (SKILL_DIR / "SKILL.md").read_text()
         schema = (SKILL_DIR / "references" / "manifest-schema.md").read_text()
 
+        self.assertIn("resource base directory", skill)
+        self.assertIn("<skill-base>/scripts/build_review.py", skill)
+        self.assertIn("dsh-easy-cr", skill)
+        self.assertIn("$DSH_WEB_URL", skill)
+        self.assertIn("Do not invent `3080`", skill)
+        self.assertIn("never scans ports", skill)
         self.assertIn("do not change code yet", skill)
         self.assertIn("Present every such item together", skill)
         self.assertIn("--resolve-batch <batch-id>", skill)
@@ -1153,6 +1170,7 @@ class CliTest(unittest.TestCase):
                 detected = easy_cr_cli.detect_client_commands()
         self.assertEqual(detected["codex"], app_codex)
         self.assertIsNone(detected["claude"])
+        self.assertIsNone(detected["dsh"])
 
     def test_configure_codex_registers_package_marketplace_outside_home(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -1470,11 +1488,180 @@ class CliTest(unittest.TestCase):
         ), mock.patch.object(
             easy_cr_cli,
             "install_helper_service",
-        ) as install_helper:
+        ) as install_helper, mock.patch.object(
+            easy_cr_cli,
+            "collect_status",
+            return_value={"clients": {
+                "codex": {"available": False, "installed": False},
+                "claude": {"available": False, "installed": False},
+                "dsh": {"available": False, "installed": False},
+            }},
+        ):
             result = easy_cr_cli.handle_init(args)
 
         self.assertEqual(result, 0)
         install_helper.assert_called_once()
+
+    def test_configure_dsh_adds_profile_bundle(self):
+        command = Path("/usr/local/bin/dsh")
+        with mock.patch.object(easy_cr_cli, "run") as run:
+            easy_cr_cli.configure_dsh(command, PLUGIN_DIR)
+        run.assert_called_once_with([
+            str(command),
+            "plugin",
+            "--profile",
+            "web",
+            "add",
+            str((PLUGIN_DIR / "packages" / "dsh-easy-cr").resolve()),
+        ])
+
+    def test_dsh_installation_state_reads_profile_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            profile = home / ".dsh" / "profiles" / "web"
+            profile.mkdir(parents=True)
+            bundle = PLUGIN_DIR / "packages" / "dsh-easy-cr"
+            (profile / "package.json").write_text(json.dumps({
+                "name": "dsh-profile-web",
+                "dependencies": {
+                    "dsh-easy-cr": f"link:{bundle}",
+                },
+                "dsh": {"profile": {"bundles": ["@deepseek-ai/dsh-base", "dsh-easy-cr"]}},
+            }))
+            with mock.patch.dict(os.environ, {"DSH_HOME": str(home / ".dsh")}):
+                state = easy_cr_cli.dsh_installation_state(
+                    None,
+                    PLUGIN_DIR,
+                    home,
+                )
+        self.assertTrue(state["installed"])
+        self.assertTrue(state["profileSourceMatches"])
+        self.assertEqual(state["profile"], "web")
+
+    def test_init_configures_dsh_client(self):
+        args = easy_cr_cli.parse_args([
+            "init",
+            "--editor",
+            "none",
+            "--client",
+            "dsh",
+            "--non-interactive",
+        ])
+        command = Path("/usr/local/bin/dsh")
+        with mock.patch.object(
+            easy_cr_cli,
+            "detect_client_commands",
+            return_value={"codex": None, "claude": None, "dsh": command},
+        ), mock.patch.object(easy_cr_cli, "install_cli"), mock.patch.object(
+            easy_cr_cli,
+            "configure_editor",
+        ), mock.patch.object(
+            easy_cr_cli,
+            "install_helper_service",
+        ), mock.patch.object(
+            easy_cr_cli,
+            "collect_status",
+            return_value={"clients": {
+                "codex": {"available": False, "installed": False},
+                "claude": {"available": False, "installed": False},
+                "dsh": {"available": True, "installed": False, "profileSourceMatches": False},
+            }},
+        ), mock.patch.object(
+            easy_cr_cli,
+            "configure_dsh",
+        ) as configure:
+            result = easy_cr_cli.handle_init(args)
+        self.assertEqual(result, 0)
+        configure.assert_called_once_with(command, easy_cr_cli.REPO_ROOT, Path.home())
+
+    def test_init_skips_already_configured_clients(self):
+        args = easy_cr_cli.parse_args([
+            "init",
+            "--editor",
+            "none",
+            "--non-interactive",
+        ])
+        command = Path("/usr/local/bin/dsh")
+        with mock.patch.object(
+            easy_cr_cli,
+            "detect_client_commands",
+            return_value={"codex": Path("/usr/bin/codex"), "claude": Path("/usr/bin/claude"), "dsh": command},
+        ), mock.patch.object(easy_cr_cli, "install_cli"), mock.patch.object(
+            easy_cr_cli,
+            "configure_editor",
+        ), mock.patch.object(
+            easy_cr_cli,
+            "install_helper_service",
+        ), mock.patch.object(
+            easy_cr_cli,
+            "collect_status",
+            return_value={"clients": {
+                "codex": {
+                    "available": True,
+                    "installed": True,
+                    "marketplaceSourceMatches": True,
+                },
+                "claude": {
+                    "available": True,
+                    "installed": True,
+                    "marketplaceSourceMatches": True,
+                },
+                "dsh": {
+                    "available": True,
+                    "installed": True,
+                    "profileSourceMatches": True,
+                },
+            }},
+        ), mock.patch.object(
+            easy_cr_cli,
+            "configure_codex",
+        ) as configure_codex, mock.patch.object(
+            easy_cr_cli,
+            "configure_claude",
+        ) as configure_claude, mock.patch.object(
+            easy_cr_cli,
+            "configure_dsh",
+        ) as configure_dsh, mock.patch.object(
+            easy_cr_cli.sys,
+            "stdout",
+            new_callable=io.StringIO,
+        ) as stdout:
+            result = easy_cr_cli.handle_init(args)
+        self.assertEqual(result, 0)
+        configure_codex.assert_not_called()
+        configure_claude.assert_not_called()
+        configure_dsh.assert_not_called()
+        output = stdout.getvalue()
+        self.assertIn("已配置 Codex", output)
+        self.assertIn("已配置 Claude", output)
+        self.assertIn("已配置 DeepSeek Harness", output)
+
+    def test_doctor_checks_dsh_plugin(self):
+        payload = {
+            "cli": {"installed": True, "sourceMatches": True},
+            "clients": {
+                "codex": {"available": False},
+                "claude": {"available": False},
+                "dsh": {
+                    "available": True,
+                    "installed": True,
+                    "profileSourceMatches": True,
+                    "error": None,
+                },
+            },
+            "editor": {"configured": "none", "valid": True},
+            "helper": {
+                "serviceInstalled": True,
+                "tokenExists": True,
+                "tokenPermissionOk": True,
+                "runtimeReady": True,
+            },
+        }
+        checks = easy_cr_cli.build_doctor_checks(payload)
+        names = {item["name"] for item in checks}
+        self.assertIn("dsh-plugin", names)
+        self.assertIn("dsh-profile", names)
+        self.assertFalse(any(item["status"] == "fail" for item in checks))
 
 
 class CliInstallerTest(unittest.TestCase):
@@ -3358,6 +3545,168 @@ class HelperServiceTest(unittest.TestCase):
             ),
         )
         self.assertIn(str(report), claude[-1])
+
+    def test_detects_dsh_session_after_codex_and_claude(self):
+        detected = easy_cr_helper.detect_originating_agent({
+            "DSH_SESSION_ID": "dsh-session",
+            "DSH_WEB_URL": "http://127.0.0.1:3080",
+        })
+        self.assertEqual(detected["client"], "dsh")
+        self.assertEqual(detected["sessionId"], "dsh-session")
+        self.assertEqual(detected["endpoint"], "http://127.0.0.1:3080")
+        on_8080 = easy_cr_helper.detect_originating_agent({
+            "DSH_SESSION_ID": "dsh-session",
+            "DSH_WEB_URL": "http://127.0.0.1:8080/",
+        })
+        self.assertEqual(on_8080["endpoint"], "http://127.0.0.1:8080")
+        preferred = easy_cr_helper.detect_originating_agent({
+            "CODEX_THREAD_ID": "codex-session",
+            "DSH_SESSION_ID": "dsh-session",
+        })
+        self.assertEqual(preferred["client"], "codex")
+
+    def test_dsh_launcher_prompts_the_bound_session(self):
+        report = Path("/repo/.codex-artifacts/review.html")
+        agent = {
+            "client": "dsh",
+            "sessionId": "dsh-session",
+            "cwd": "/repo",
+            "endpoint": "http://127.0.0.1:3080",
+            "reportSubject": "帐期优化",
+            "reviewBatchId": "batch-1",
+            "reviewCommentIds": ["c1"],
+        }
+        def fake_rpc(method, payload, *, endpoint, timeout=30):
+            if method == "session.history":
+                return {"events": [], "hasMore": False}
+            raise AssertionError(method)
+
+        with mock.patch.object(easy_cr_helper, "_dsh_rpc", side_effect=fake_rpc), mock.patch.object(
+            easy_cr_helper,
+            "dsh_session_prompt",
+        ) as prompt:
+            easy_cr_helper._default_launcher(agent, report)
+        prompt.assert_called_once()
+        self.assertEqual(prompt.call_args.args[0], "dsh-session")
+        self.assertIn("批次 batch-1", prompt.call_args.args[1])
+        self.assertEqual(
+            prompt.call_args.kwargs["endpoint"],
+            "http://127.0.0.1:3080",
+        )
+
+    def test_resolve_dsh_endpoint_uses_only_prepared_addresses(self):
+        agent = {
+            "client": "dsh",
+            "sessionId": "dsh-session",
+            "endpoint": "http://127.0.0.1:3080",
+        }
+
+        def fake_rpc(method, payload, *, endpoint, timeout=30):
+            if method != "session.history":
+                raise AssertionError(method)
+            if endpoint == "http://127.0.0.1:3080":
+                raise RuntimeError("无法连接 DeepSeek Harness（http://127.0.0.1:3080）。请先打开 dsh web。")
+            if endpoint == "http://127.0.0.1:8080":
+                return {"events": [], "hasMore": False}
+            raise AssertionError(endpoint)
+
+        with mock.patch.object(easy_cr_helper, "_dsh_rpc", side_effect=fake_rpc):
+            chosen = easy_cr_helper.resolve_dsh_endpoint(
+                agent,
+                {"DSH_WEB_URL": "http://127.0.0.1:8080"},
+            )
+        self.assertEqual(chosen, "http://127.0.0.1:8080")
+        self.assertEqual(agent["endpoint"], "http://127.0.0.1:8080")
+        with mock.patch.object(easy_cr_helper, "_dsh_rpc", side_effect=fake_rpc):
+            with self.assertRaisesRegex(RuntimeError, "不要扫描端口"):
+                easy_cr_helper.resolve_dsh_endpoint(
+                    {"sessionId": "dsh-session"},
+                    {},
+                )
+
+    def test_register_report_accepts_dsh_agent(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            report = self.make_report(root)
+            store = easy_cr_helper.HelperStore(root / "config")
+            result = store.register_report({
+                "reportId": "report-1",
+                "path": str(report),
+                "repositoryRoots": [str(root / "repo")],
+                "agent": {
+                    "client": "dsh",
+                    "sessionId": "dsh-session",
+                    "cwd": str(root / "repo"),
+                    "endpoint": "http://127.0.0.1:3080",
+                },
+            })
+        self.assertTrue(result["agentBound"])
+
+    def test_dsh_explainer_creates_session_and_streams_answer(self):
+        report = Path("/repo/.codex-artifacts/review.html")
+        agent = {
+            "client": "dsh",
+            "sessionId": "source-session",
+            "cwd": "/repo",
+            "endpoint": "http://127.0.0.1:3080",
+            "reportSubject": "帐期优化",
+        }
+        calls: list[tuple[str, dict]] = []
+
+        prompted = False
+
+        def fake_rpc(method, payload, *, endpoint, timeout=30):
+            nonlocal prompted
+            calls.append((method, payload))
+            if method == "session.create":
+                return {"sessionId": "explain-session"}
+            if method == "session.prompt":
+                prompted = True
+                return {"accepted": True}
+            if method == "session.history":
+                if not prompted:
+                    return {"events": [], "hasMore": False}
+                return {
+                    "events": [
+                        {
+                            "event": {
+                                "type": "assistant/message",
+                                "seq": 2,
+                                "data": {
+                                    "message": {
+                                        "content": [{"type": "text", "text": "这是只读解释。"}],
+                                    },
+                                },
+                            },
+                        },
+                        {"event": {"type": "turn/end", "seq": 3, "data": {}}},
+                    ],
+                    "hasMore": False,
+                }
+            raise AssertionError(method)
+
+        with mock.patch.object(easy_cr_helper, "_dsh_rpc", side_effect=fake_rpc):
+            text = "".join(easy_cr_helper._dsh_explainer(
+                agent,
+                report,
+                {
+                    "selection": "return err",
+                    "question": "这是什么？",
+                    "target": {"path": "a.go", "lineLabel": "+1"},
+                },
+                timeout_seconds=2,
+                poll_interval_seconds=0,
+            ))
+        self.assertEqual(text, "这是只读解释。")
+        self.assertEqual(agent["explanationSessionId"], "explain-session")
+        self.assertEqual([name for name, _payload in calls[:4]], [
+            "session.history",
+            "session.create",
+            "session.history",
+            "session.prompt",
+        ])
+        self.assertEqual(calls[3][1]["sessionId"], "explain-session")
+        self.assertIn("不要修改任何文件", calls[3][1]["content"][0]["text"])
 
     def test_explanation_command_is_read_only_and_ephemeral(self):
         report = Path("/repo/.codex-artifacts/review.html")

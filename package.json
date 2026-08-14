@@ -5,6 +5,7 @@
   "keywords": [
     "codex",
     "claude-code",
+    "deepseek-harness",
     "code-review",
     "developer-tools",
     "goland",
@@ -25,6 +26,10 @@
     ".codex-plugin/plugin.json",
     "bin/easy-cr",
     "bin/easy-cr.js",
+    "packages/dsh-easy-cr/package.json",
+    "packages/dsh-easy-cr/cordis.patch.yml",
+    "packages/dsh-easy-cr/index.js",
+    "packages/dsh-easy-cr/README.md",
     "scripts/install_cli.py",
     "scripts/python-runner.js",
     "skills/easy-cr/SKILL.md",

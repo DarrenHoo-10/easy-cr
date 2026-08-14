@@ -2,7 +2,7 @@
 
 **按技术方案看懂 AI 改动，集中完成 CR，一次把所有评论发回 AI。**
 
-Codex、Claude Code 让代码生成越来越快，但生产级代码仍然需要人工把关。
+Codex、Claude Code 和 DeepSeek Harness 让代码生成越来越快，但生产级代码仍然需要人工把关。
 Easy CR 把散落在多个文件、甚至多个仓库中的改动，整理成一份沿技术方案和
 业务执行顺序展开的交互式报告。你可以在同一份报告里完成多轮评论，然后点击
 一次按钮，把本轮所有意见直接发送给原来的 AI 会话。
@@ -56,7 +56,7 @@ Easy CR 把散落在多个文件、甚至多个仓库中的改动，整理成一
 
 1. Easy CR 只发送本轮尚未处理的评论；
 2. 评论立即进入“处理中”状态；
-3. 原来的 Codex 或 Claude Code 会话自动恢复；
+3. 原来的 Codex、Claude Code 或后续接入的 DeepSeek Harness 会话自动恢复；
 4. AI 读取评论对应的文件、代码范围和上下文；
 5. 修改、验证并重新生成同一份报告；
 6. AI 回复每条评论的处理结果，并将本批评论标记为“已解决”。
@@ -65,7 +65,7 @@ Easy CR 把散落在多个文件、甚至多个仓库中的改动，整理成一
 
 ## 一次完整的 CR 闭环
 
-1. Codex 或 Claude Code 完成需求开发。
+1. Codex、Claude Code 或 DeepSeek Harness 完成需求开发。
 2. Easy CR 按技术方案和业务顺序生成交互式 CR 报告。
 3. 人工沿章节和步骤阅读代码，在报告中完成本轮所有评论。
 4. 点击 **发送评论给 AI**，一次提交本轮全部未处理意见。
@@ -120,25 +120,36 @@ easy-cr init \
   --editor vscode \
   --client codex \
   --client claude \
+  --client dsh \
   --non-interactive
 ```
 
 PowerShell 可直接写成一行：
 
 ```powershell
-easy-cr init --editor vscode --client codex --client claude --non-interactive
+easy-cr init --editor vscode --client codex --client claude --client dsh --non-interactive
 ```
 
-Codex 用户初始化后新建一个任务，让 Easy CR skill 生效。
+DeepSeek Harness 会把 `packages/dsh-easy-cr` 装进 `web` profile，作为常驻插件，而不是拷一份 skill 到 `~/.dsh/skills`：
+
+```bash
+dsh plugin --profile web add ./packages/dsh-easy-cr
+```
+
+装好后重启 `dsh web`。可用 `dsh --profile web --dump-config` 确认出现 `# == dsh-easy-cr`。Codex 用户初始化后新建一个任务，让 Easy CR skill 生效。
 
 ### 3. 生成评审
 
-在目标 Git 仓库中打开 Codex 或 Claude Code，直接描述评审范围。
+在目标 Git 仓库中打开 Codex、Claude Code 或 DeepSeek Harness，直接描述评审范围。DeepSeek Harness 里也可以只输入 `/easy-cr`，或 `/easy-cr` 后面跟自然语言，不必带子命令。
 
 评审当前工作区：
 
 ```text
 使用 Easy CR 评审当前工作区改动
+```
+
+```text
+/easy-cr 评审当前工作区改动
 ```
 
 评审最新提交：
@@ -175,8 +186,9 @@ Easy CR 会分析改动、还原技术方案、生成 HTML 并在浏览器中打
 - 点击顶部“评论 N”检查本轮全部评审意见。
 - 点击右上角 **发送评论给 AI**。
 
-Easy CR 会恢复生成这份报告的原始 Codex 或 Claude Code 会话，并将本轮未处理
+Easy CR 会恢复生成这份报告的原始 Codex、Claude Code 或 DeepSeek Harness 会话，并将本轮未处理
 评论作为一个批次交给 AI。你无需复制评论，也无需为每个问题单独发起一次交互。
+DeepSeek Harness 绑定在生成报告前准备：记下当时的 `$DSH_SESSION_ID` 和 `$DSH_WEB_URL`。回投只打这个已记录的本机 Web 地址，不扫描端口。
 
 ## 编辑器联动
 
@@ -224,7 +236,7 @@ easy-cr doctor --launch
 
 | 命令 | 用途 |
 | --- | --- |
-| `easy-cr init` | 初始化 Codex、Claude Code 和编辑器 |
+| `easy-cr init` | 初始化 Codex、Claude Code、DeepSeek Harness 和编辑器 |
 | `easy-cr status` | 查看当前安装与配置 |
 | `easy-cr config editor <editor>` | 切换评审编辑器，不自动启动 |
 | `easy-cr open` | 使用当前编辑器打开项目 |
@@ -257,7 +269,7 @@ easy-cr doctor
 
 ### 评审页提示版本不一致
 
-评审生成后代码已经发生变化。让 Codex 或 Claude Code 重新生成 Easy CR 评审，确保评论和跳转始终对应当前代码。
+评审生成后代码已经发生变化。让 Codex、Claude Code 或 DeepSeek Harness 重新生成 Easy CR 评审，确保评论和跳转始终对应当前代码。
 
 ### “发送评论给 AI”不可用
 

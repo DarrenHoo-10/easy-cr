@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Initialize and diagnose Easy CR for Codex, Claude Code, and editors."""
+"""Initialize and diagnose Easy CR for Codex, Claude Code, DeepSeek Harness, and editors."""
 
 from __future__ import annotations
 
@@ -64,10 +64,16 @@ from platform_support import default_cli_destination, private_permissions_ok
 VERSION = "1.5.0"
 SKILL_DIR = SCRIPT_DIR.parent
 REPO_ROOT = SKILL_DIR.parents[1]
+DSH_PROFILE_NAME = "web"
 SETUP_JETBRAINS_SCRIPT = SCRIPT_DIR / "setup_jetbrains_plugin.py"
 SETUP_VSCODE_SCRIPT = SCRIPT_DIR / "setup_vscode_extension.py"
 INSTALL_CLI_SCRIPT = REPO_ROOT / "scripts" / "install_cli.py"
 CODEX_APP_COMMAND = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
+CLIENT_LABELS = {
+    "codex": "Codex",
+    "claude": "Claude",
+    "dsh": "DeepSeek Harness",
+}
 CLI_EDITOR_CHOICES = tuple(sorted(VALID_EDITORS))
 JETBRAINS_EDITOR_IDS = frozenset(JETBRAINS_EDITORS)
 
@@ -81,7 +87,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     init_parser.add_argument("--editor", choices=CLI_EDITOR_CHOICES)
     init_parser.add_argument(
         "--client",
-        choices=("codex", "claude"),
+        choices=("codex", "claude", "dsh"),
         action="append",
         default=[],
     )
@@ -162,10 +168,23 @@ def detect_client_commands() -> dict[str, Path | None]:
     else:
         codex_path = None
     claude = shutil.which("claude")
+    dsh = shutil.which("dsh")
     return {
         "codex": codex_path,
         "claude": Path(claude) if claude else None,
+        "dsh": Path(dsh) if dsh else None,
     }
+
+
+def resolve_dsh_home(home: Path | None = None) -> Path:
+    env = os.environ.get("DSH_HOME")
+    if env:
+        return Path(env).expanduser()
+    return (home or Path.home()) / ".dsh"
+
+
+def dsh_profile_manifest(home: Path | None = None) -> Path:
+    return resolve_dsh_home(home) / "profiles" / DSH_PROFILE_NAME / "package.json"
 
 
 def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -334,6 +353,72 @@ def configure_claude(command: Path, repo_root: Path) -> None:
             "--scope",
             "user",
         ])
+
+
+def configure_dsh(
+    command: Path,
+    repo_root: Path,
+    home: Path | None = None,
+    *,
+    profile: str = DSH_PROFILE_NAME,
+) -> None:
+    bundle = (repo_root / "packages" / "dsh-easy-cr").resolve()
+    if not (bundle / "package.json").is_file():
+        raise RuntimeError(f"未找到 DeepSeek Harness 插件：{bundle}")
+    run([
+        str(command),
+        "plugin",
+        "--profile",
+        profile,
+        "add",
+        str(bundle),
+    ])
+
+
+def dsh_installation_state(
+    command: Path | None,
+    repo_root: Path,
+    home: Path | None = None,
+) -> dict[str, Any]:
+    manifest_path = dsh_profile_manifest(home)
+    if not manifest_path.is_file():
+        return {
+            "installed": False,
+            "profile": DSH_PROFILE_NAME,
+            "profileSourceMatches": False,
+            "error": f"未找到 profile {DSH_PROFILE_NAME}",
+        }
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return {
+            "installed": False,
+            "profile": DSH_PROFILE_NAME,
+            "profileSourceMatches": False,
+            "error": str(error),
+        }
+    dependencies = payload.get("dependencies")
+    if not isinstance(dependencies, dict):
+        dependencies = {}
+    listed = payload.get("dsh", {}).get("profile", {}).get("bundles")
+    if not isinstance(listed, list):
+        listed = []
+    installed = "dsh-easy-cr" in dependencies and "dsh-easy-cr" in listed
+    configured = dependencies.get("dsh-easy-cr")
+    expected = (repo_root / "packages" / "dsh-easy-cr").resolve()
+    source_matches = False
+    if isinstance(configured, str):
+        raw = configured.removeprefix("link:").removeprefix("file:")
+        try:
+            source_matches = Path(raw).expanduser().resolve() == expected
+        except OSError:
+            source_matches = False
+    return {
+        "installed": installed,
+        "profile": DSH_PROFILE_NAME,
+        "profileSourceMatches": source_matches,
+        "error": None,
+    }
 
 
 def install_cli() -> None:
@@ -754,6 +839,11 @@ def collect_status(
         commands.get("claude"),
         repo_root,
     )
+    dsh_installation = dsh_installation_state(
+        commands.get("dsh"),
+        repo_root,
+        home,
+    )
     helper_token_exists = MASTER_TOKEN_PATH.is_file()
     helper_token_permission_ok = False
     helper_runtime_ready = False
@@ -783,6 +873,14 @@ def collect_status(
                 "available": commands.get("claude") is not None,
                 "command": str(commands["claude"]) if commands.get("claude") else None,
                 **claude_installation,
+            },
+            "dsh": {
+                "available": (
+                    commands.get("dsh") is not None
+                    or bool(dsh_installation.get("installed"))
+                ),
+                "command": str(commands["dsh"]) if commands.get("dsh") else None,
+                **dsh_installation,
             },
         },
         "editor": {
@@ -851,6 +949,17 @@ def build_doctor_checks(payload: dict[str, Any]) -> list[dict[str, str]]:
             clients["claude"]["installed"],
             clients["claude"].get("error") or "Easy CR 插件安装状态",
         )
+    if clients.get("dsh", {}).get("available"):
+        add(
+            "dsh-profile",
+            bool(clients["dsh"].get("profileSourceMatches")),
+            "Easy CR DeepSeek Harness 插件源码路径",
+        )
+        add(
+            "dsh-plugin",
+            bool(clients["dsh"].get("installed")),
+            clients["dsh"].get("error") or "Easy CR DeepSeek Harness 插件安装状态",
+        )
 
     configured = editor["configured"]
     if configured in ENHANCED_EDITORS:
@@ -908,7 +1017,7 @@ def print_status(payload: dict[str, Any]) -> None:
             label = "已安装 Easy CR"
         else:
             label = "已检测，未安装 Easy CR"
-        print(f"{name.capitalize()}：{label}")
+        print(f"{CLIENT_LABELS.get(name, name)}：{label}")
     editor = payload["editor"]["configured"] or "未配置"
     print(f"编辑器：{editor}")
     runtime = payload["editor"].get("runtime")
@@ -925,30 +1034,60 @@ def print_status(payload: dict[str, Any]) -> None:
     )
 
 
+def client_already_configured(name: str, state: dict[str, Any]) -> bool:
+    if not state.get("installed"):
+        return False
+    if name == "dsh":
+        return bool(state.get("profileSourceMatches"))
+    if name in {"codex", "claude"}:
+        return bool(state.get("marketplaceSourceMatches"))
+    return True
+
+
 def handle_init(args: argparse.Namespace) -> int:
+    home = Path.home()
     commands = detect_client_commands()
+    status = collect_status(repo_root=REPO_ROOT, home=home, client_commands=commands)
     requested = list(dict.fromkeys(args.client))
     clients = requested or [
         name for name, command in commands.items() if command is not None
     ]
+    if not requested:
+        for name, state in status["clients"].items():
+            if name not in clients and client_already_configured(name, state):
+                clients.append(name)
     if requested:
-        missing = [name for name in requested if commands[name] is None]
+        missing = [
+            name
+            for name in requested
+            if commands.get(name) is None
+            and not client_already_configured(name, status["clients"].get(name, {}))
+        ]
         if missing:
             raise RuntimeError("未检测到客户端：" + ", ".join(missing))
     if not clients:
-        print("未检测到 Codex 或 Claude Code，已仅配置 Easy CR 本地能力。")
+        print("未检测到 Codex、Claude Code 或 DeepSeek Harness，已仅配置 Easy CR 本地能力。")
 
     install_cli()
     install_helper_service()
     print("Easy CR 评论服务已启动。")
     for client in clients:
-        command = commands[client]
-        assert command is not None
+        label = CLIENT_LABELS.get(client, client)
+        state = status["clients"].get(client, {})
+        if client_already_configured(client, state):
+            print(f"已配置 {label}")
+            continue
+        command = commands.get(client)
+        if command is None:
+            print(f"已检测 {label}，但未找到可执行命令，已跳过安装")
+            continue
         if client == "codex":
-            configure_codex(command, REPO_ROOT, Path.home())
-        else:
+            configure_codex(command, REPO_ROOT, home)
+        elif client == "claude":
             configure_claude(command, REPO_ROOT)
-        print(f"已配置 {client}")
+        else:
+            configure_dsh(command, REPO_ROOT, home)
+        print(f"已配置 {label}")
 
     editor = args.editor or choose_editor()
     installed = configure_editor(editor)

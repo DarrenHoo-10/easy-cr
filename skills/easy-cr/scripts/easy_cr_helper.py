@@ -354,12 +354,13 @@ def _post_json(
 
 def detect_originating_agent(environ: dict[str, str] | None = None) -> dict[str, str] | None:
     values = environ or os.environ
+    cwd = str(Path.cwd().resolve())
     codex_session = values.get("CODEX_THREAD_ID")
     if codex_session:
         return {
             "client": "codex",
             "sessionId": codex_session,
-            "cwd": str(Path.cwd().resolve()),
+            "cwd": cwd,
         }
     claude_session = (
         values.get("CLAUDE_CODE_SESSION_ID")
@@ -369,8 +370,21 @@ def detect_originating_agent(environ: dict[str, str] | None = None) -> dict[str,
         return {
             "client": "claude",
             "sessionId": claude_session,
-            "cwd": str(Path.cwd().resolve()),
+            "cwd": cwd,
         }
+    dsh_session = values.get("DSH_SESSION_ID")
+    if dsh_session:
+        agent = {
+            "client": "dsh",
+            "sessionId": dsh_session,
+            "cwd": cwd,
+        }
+        endpoint = _normalize_dsh_endpoint(
+            values.get("DSH_WEB_URL") or values.get("EASY_CR_DSH_ENDPOINT")
+        )
+        if endpoint:
+            agent["endpoint"] = endpoint
+        return agent
     return None
 
 
@@ -397,6 +411,11 @@ def prepare_report_helper(
         cwd = Path(agent["cwd"]).resolve()
         if not any(cwd == root or root in cwd.parents for root in roots):
             agent["cwd"] = str(roots[0])
+        if agent.get("client") == "dsh" and not agent.get("endpoint"):
+            raise RuntimeError(
+                "DeepSeek Harness 报告绑定需要 $DSH_WEB_URL 或 $EASY_CR_DSH_ENDPOINT。"
+                "请在生成报告前检查当前 Web 运行环境，不要猜测端口。"
+            )
     result = _post_json(
         endpoint,
         "/api/reports/register",
@@ -466,6 +485,246 @@ def agent_command(
             prompt,
         ]
     raise RuntimeError("报告未绑定可恢复的 Agent")
+
+
+def _normalize_dsh_endpoint(value: object) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    endpoint = value.strip().rstrip("/")
+    if endpoint.startswith("http://127.0.0.1") or endpoint.startswith("http://localhost"):
+        return endpoint
+    return None
+
+
+def _dsh_hint_endpoints(
+    agent: dict[str, Any] | None = None,
+    environ: dict[str, str] | None = None,
+) -> list[str]:
+    values = os.environ if environ is None else environ
+    hints: list[str] = []
+    for raw in (
+        values.get("EASY_CR_DSH_ENDPOINT"),
+        values.get("DSH_WEB_URL"),
+        (agent or {}).get("endpoint"),
+    ):
+        endpoint = _normalize_dsh_endpoint(raw)
+        if endpoint and endpoint not in hints:
+            hints.append(endpoint)
+    return hints
+
+
+def _dsh_endpoint_owns_session(endpoint: str, session_id: str) -> bool:
+    try:
+        _dsh_rpc(
+            "session.history",
+            {"sessionId": session_id, "maxMessages": 1},
+            endpoint=endpoint,
+            timeout=0.8,
+        )
+        return True
+    except RuntimeError:
+        return False
+
+
+def resolve_dsh_endpoint(
+    agent: dict[str, Any] | None = None,
+    environ: dict[str, str] | None = None,
+) -> str:
+    session_id = str((agent or {}).get("sessionId") or "").strip()
+    hints = _dsh_hint_endpoints(agent, environ)
+    if not hints:
+        raise RuntimeError(
+            "DeepSeek Harness Web 地址未知。"
+            "生成报告前必须准备 $DSH_WEB_URL 或 $EASY_CR_DSH_ENDPOINT，不要扫描端口。"
+        )
+    chosen: str | None = None
+    if session_id:
+        for endpoint in hints:
+            if _dsh_endpoint_owns_session(endpoint, session_id):
+                chosen = endpoint
+                break
+    else:
+        chosen = hints[0]
+    if chosen is None:
+        raise RuntimeError(
+            "无法连接绑定该会话的 DeepSeek Harness。"
+            f"已尝试 {', '.join(hints)}。"
+            "请用当前 $DSH_WEB_URL 重新生成报告，或设置 EASY_CR_DSH_ENDPOINT。"
+        )
+    if agent is not None:
+        agent["endpoint"] = chosen
+    return chosen
+
+
+def _dsh_rpc(
+    method: str,
+    payload: dict[str, Any],
+    *,
+    endpoint: str,
+    timeout: float = 30,
+) -> Any:
+    request = urllib.request.Request(
+        f"{endpoint}/api/{method}",
+        data=json.dumps({
+            "type": "client-request",
+            "rpcId": f"easy-cr-{uuid.uuid4()}",
+            "method": method,
+            "payload": payload,
+        }, ensure_ascii=False).encode(),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", "replace") if error.fp else ""
+        raise RuntimeError(
+            f"DeepSeek Harness {method} HTTP {error.code}"
+            + (f"：{detail}" if detail else "")
+        ) from error
+    except urllib.error.URLError as error:
+        raise RuntimeError(
+            f"无法连接 DeepSeek Harness（{endpoint}）。请先打开 dsh web。"
+        ) from error
+    result = body.get("result") if isinstance(body, dict) else None
+    if not isinstance(result, dict):
+        raise RuntimeError(f"DeepSeek Harness {method} 返回了无效数据")
+    if result.get("ok") is True:
+        return result.get("value")
+    error = result.get("error") if isinstance(result.get("error"), dict) else {}
+    code = error.get("code") or "error"
+    message = error.get("message") or "请求失败"
+    raise RuntimeError(f"DeepSeek Harness {method} 失败（{code}）：{message}")
+
+
+def dsh_session_prompt(
+    session_id: str,
+    text: str,
+    *,
+    endpoint: str,
+    timeout: float = 30,
+) -> None:
+    if not session_id:
+        raise RuntimeError("DeepSeek Harness sessionId 缺失")
+    _dsh_rpc(
+        "session.prompt",
+        {
+            "sessionId": session_id,
+            "mode": "queue",
+            "content": [{"type": "text", "text": text}],
+        },
+        endpoint=endpoint,
+        timeout=timeout,
+    )
+
+
+def _assistant_text(event: dict[str, Any]) -> str:
+    if event.get("type") != "assistant/message":
+        return ""
+    data = event.get("data")
+    message = data.get("message") if isinstance(data, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "text":
+            text = block.get("text")
+            if isinstance(text, str) and text:
+                parts.append(text)
+    return "".join(parts)
+
+
+def _dsh_history_events(
+    session_id: str,
+    *,
+    endpoint: str,
+) -> list[dict[str, Any]]:
+    value = _dsh_rpc(
+        "session.history",
+        {"sessionId": session_id, "maxMessages": 80},
+        endpoint=endpoint,
+        timeout=15,
+    )
+    events: list[dict[str, Any]] = []
+    if not isinstance(value, dict):
+        return events
+    for item in value.get("events") or []:
+        event = item.get("event") if isinstance(item, dict) else item
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def _dsh_latest_seq(events: list[dict[str, Any]]) -> int:
+    latest = 0
+    for event in events:
+        seq = event.get("seq")
+        if isinstance(seq, int) and seq > latest:
+            latest = seq
+    return latest
+
+
+def _dsh_explainer(
+    agent: dict[str, Any],
+    report_path: Path,
+    request: dict[str, Any],
+    *,
+    timeout_seconds: float = 120,
+    poll_interval_seconds: float = 0.4,
+) -> Iterable[str]:
+    endpoint = resolve_dsh_endpoint(agent)
+    selection = str(request.get("selection") or "").strip()
+    target = request.get("target") if isinstance(request.get("target"), dict) else {}
+    question = str(request.get("question") or "").strip()
+    raw_history = request.get("history")
+    history = raw_history if isinstance(raw_history, list) else []
+    subject = str(agent.get("reportSubject") or report_path.stem)
+    prompt = explanation_prompt(subject, selection, target, question, history)
+    session_id = str(agent.get("explanationSessionId") or "").strip()
+    if not session_id:
+        created = _dsh_rpc(
+            "session.create",
+            {"cwd": str(agent.get("cwd") or Path.cwd())},
+            endpoint=endpoint,
+            timeout=15,
+        )
+        if not isinstance(created, dict) or not created.get("sessionId"):
+            raise RuntimeError("DeepSeek Harness 未返回 explanation sessionId")
+        session_id = str(created["sessionId"])
+        agent["explanationSessionId"] = session_id
+    before = _dsh_latest_seq(_dsh_history_events(session_id, endpoint=endpoint))
+    dsh_session_prompt(session_id, prompt, endpoint=endpoint)
+    deadline = time.monotonic() + timeout_seconds
+    emitted = ""
+    while time.monotonic() < deadline:
+        events = _dsh_history_events(session_id, endpoint=endpoint)
+        answers = [
+            _assistant_text(event)
+            for event in events
+            if isinstance(event.get("seq"), int)
+            and event["seq"] > before
+            and event.get("type") == "assistant/message"
+        ]
+        text = "".join(answers)
+        if text.startswith(emitted) and len(text) > len(emitted):
+            yield text[len(emitted):]
+            emitted = text
+        closed = any(
+            event.get("type") == "turn/end"
+            and isinstance(event.get("seq"), int)
+            and event["seq"] > before
+            for event in events
+        )
+        if closed:
+            if emitted:
+                return
+            raise RuntimeError("DeepSeek Harness 解释会话已结束，但没有返回文本")
+        time.sleep(poll_interval_seconds)
+    if emitted:
+        return
+    raise RuntimeError("DeepSeek Harness 解释会话超时，请确认 dsh web 仍在运行")
 
 
 def explanation_prompt(
@@ -824,6 +1083,9 @@ def _default_explainer(
     report_path: Path,
     request: dict[str, Any],
 ) -> Iterable[str]:
+    if agent.get("client") == "dsh":
+        yield from _dsh_explainer(agent, report_path, request)
+        return
     selection = str(request.get("selection") or "").strip()
     target = request.get("target") if isinstance(request.get("target"), dict) else {}
     question = str(request.get("question") or "").strip()
@@ -1095,6 +1357,13 @@ def _codex_cli_fallback_allowed() -> bool:
 
 
 def _default_launcher(agent: dict[str, Any], report_path: Path) -> None:
+    if agent.get("client") == "dsh":
+        dsh_session_prompt(
+            str(agent.get("sessionId") or ""),
+            agent_prompt(agent, report_path),
+            endpoint=resolve_dsh_endpoint(agent),
+        )
+        return
     if agent.get("client") == "codex":
         try:
             submit_codex_turn(
@@ -1226,7 +1495,7 @@ class HelperStore:
         if agent is not None:
             if not isinstance(agent, dict):
                 raise ValueError("Agent 信息无效")
-            if agent.get("client") not in {"codex", "claude"}:
+            if agent.get("client") not in {"codex", "claude", "dsh"}:
                 raise ValueError("Agent client 无效")
             if not isinstance(agent.get("sessionId"), str) or not agent["sessionId"]:
                 raise ValueError("Agent sessionId 缺失")
@@ -1406,7 +1675,10 @@ class HelperStore:
                     current_session_id = str(
                         explain_agent.get("explanationSessionId") or ""
                     ).strip()
-                    if current_session_id != previous_session_id:
+                    if (
+                        current_session_id != previous_session_id
+                        or explain_agent.get("endpoint")
+                    ):
                         with self.lock:
                             registry = self._load()
                             sessions = registry["explanationSessions"]
@@ -1422,6 +1694,13 @@ class HelperStore:
                                 }
                             else:
                                 sessions.pop(review_key, None)
+                            report = registry["reports"].get(report_id)
+                            if (
+                                isinstance(report, dict)
+                                and isinstance(report.get("agent"), dict)
+                                and explain_agent.get("endpoint")
+                            ):
+                                report["agent"]["endpoint"] = explain_agent["endpoint"]
                             self._save(registry)
 
         return stream()
@@ -1499,6 +1778,8 @@ class HelperStore:
             except Exception:
                 _atomic_write(path, source.encode(), mode=mode)
                 raise
+            if isinstance(entry.get("agent"), dict) and launch_agent.get("endpoint"):
+                entry["agent"]["endpoint"] = launch_agent["endpoint"]
             completion = {
                 "revision": embedded["revision"],
                 "client": agent.get("client"),
